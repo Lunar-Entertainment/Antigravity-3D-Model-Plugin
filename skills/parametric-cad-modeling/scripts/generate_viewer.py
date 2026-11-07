@@ -239,10 +239,11 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
         <div>
           <div class="font-semibold text-[var(--foreground)] mb-1">Shader Mode</div>
           <div class="grid grid-cols-2 gap-1">
-            <button id="mode-shaded" onclick="setMode('shaded')" class="bg-[var(--primary)] text-[var(--primary-foreground)] border border-[var(--border)] rounded px-2 py-1 font-medium transition">CAD Solid</button>
+            <button id="mode-clean" onclick="setMode('clean')" class="bg-[var(--primary)] text-[var(--primary-foreground)] border border-[var(--border)] rounded px-2 py-1 font-medium transition">Clean Surface</button>
+            <button id="mode-shaded" onclick="setMode('shaded')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] rounded px-2 py-1 font-medium transition">CAD Wire</button>
             <button id="mode-dfm" onclick="setMode('dfm')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] rounded px-2 py-1 font-medium transition">DFM Overhang</button>
             <button id="mode-wire" onclick="setMode('wire')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] rounded px-2 py-1 font-medium transition">Wireframe</button>
-            <button id="mode-xray" onclick="setMode('xray')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] rounded px-2 py-1 font-medium transition">X-Ray</button>
+            <button id="mode-xray" onclick="setMode('xray')" class="col-span-2 bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] rounded px-2 py-1 font-medium transition">X-Ray Internal</button>
           </div>
         </div>
 
@@ -269,7 +270,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
     // =========================================================================
     const STATE_KEY = 'agy_cad_studio_locked_view_v2';
     let yaw = -0.65, pitch = 0.55, zoom = 1.0, panX = 0, panY = 0;
-    let renderMode = 'shaded';
+    let renderMode = 'clean';
     let slicePct = 100;
     let showCalipers = true;
 
@@ -408,12 +409,15 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
               bool isOverhang = (n.z < -0.708 && vModelZ > uZMin + 0.25);
               baseCol = isOverhang ? vec3(0.94, 0.27, 0.27) : vec3(0.13, 0.77, 0.37);
             }} else {{
-              // CAD Solid mode (anodized engineering steel-blue)
+              // Clean Surface or CAD Solid mode (anodized engineering steel-blue)
               baseCol = vec3(0.16, 0.44, 0.68) + vec3(0.36, 0.46, 0.32) * (shade - 0.25);
             }}
 
             vec3 finalCol = baseCol * shade + vec3(spec);
-            finalCol = mix(finalCol * 0.62, finalCol, edge);
+            if (uMode != 4) {{
+              // Draw barycentric triangle edge lines only when NOT in Clean Surface mode
+              finalCol = mix(finalCol * 0.62, finalCol, edge);
+            }}
             gl_FragColor = vec4(finalCol, 1.0);
           }}
         `;
@@ -731,12 +735,13 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
     }}
 
     function updateModeButtons() {{
-      ['shaded', 'dfm', 'wire', 'xray'].forEach(id => {{
+      ['clean', 'shaded', 'dfm', 'wire', 'xray'].forEach(id => {{
         const btn = document.getElementById('mode-' + id);
+        if (!btn) return;
         if (id === renderMode) {{
-          btn.className = 'bg-[var(--primary)] text-[var(--primary-foreground)] border border-[var(--border)] rounded px-2 py-1 font-medium transition';
+          btn.className = (id === 'xray' ? 'col-span-2 ' : '') + 'bg-[var(--primary)] text-[var(--primary-foreground)] border border-[var(--border)] rounded px-2 py-1 font-medium transition';
         }} else {{
-          btn.className = 'bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] rounded px-2 py-1 font-medium transition';
+          btn.className = (id === 'xray' ? 'col-span-2 ' : '') + 'bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] rounded px-2 py-1 font-medium transition';
         }}
       }});
     }}
@@ -795,7 +800,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
 
         if (totalTriCount > 0 && activeTriCount > 0) {{
           gl.useProgram(glProgram);
-          const modeInt = renderMode === 'dfm' ? 1 : (renderMode === 'wire' ? 2 : (renderMode === 'xray' ? 3 : 0));
+          const modeInt = renderMode === 'clean' ? 4 : (renderMode === 'dfm' ? 1 : (renderMode === 'wire' ? 2 : (renderMode === 'xray' ? 3 : 0)));
 
           if (modeInt === 3) {{
             gl.disable(gl.DEPTH_TEST);
