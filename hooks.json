@@ -1,0 +1,17 @@
+{
+  "live-cad-studio-auto-sync": {
+    "enabled": true,
+    "PostToolUse": [
+      {
+        "matcher": "run_command|write_file|edit_file|call_mcp_tool",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 /home/lunar/Documents/Projects/3d-model-plugin/scripts/live_sync_hook.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

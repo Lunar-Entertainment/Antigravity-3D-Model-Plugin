@@ -1,0 +1,13 @@
+{
+  "name": "3d-model-studio",
+  "displayName": "3D Model & Parametric CAD Studio",
+  "version": "1.0.0",
+  "description": "Precision parametric 3D modeling, structural engineering, DFM/3D-printing optimization, automated mesh & tolerance verification, and interactive 3D CAD previewing.",
+  "author": "Lunar Studio",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Design a sturdy parametric electronics enclosure (120x80x45mm) with M3 screw bosses, filleted edges, and a snap-fit lid",
+    "Create a heavy-duty reinforced L-bracket (60x60x40mm, 4mm thick) with dual gusset ribs and countersunk M4 mounting holes",
+    "Audit my 3D model for exact dimensions, manifold watertightness, overhang printability, and structural weak points"
+  ]
+}

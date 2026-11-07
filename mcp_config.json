@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "3d-model-studio-mcp": {
+      "command": "python3",
+      "args": [
+        "/home/lunar/Documents/Projects/3d-model-plugin/mcp/cad_studio_server.py"
+      ]
+    }
+  }
+}

@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" fill="none">
+  <defs>
+    <linearGradient id="topFace" x1="64" y1="44" x2="192" y2="118" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#0284C7"/>
+    </linearGradient>
+    <linearGradient id="leftFace" x1="48" y1="88" x2="128" y2="204" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0EA5E9"/>
+      <stop offset="100%" stop-color="#0369A1"/>
+    </linearGradient>
+    <linearGradient id="rightFace" x1="128" y1="118" x2="208" y2="204" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0284C7"/>
+      <stop offset="100%" stop-color="#1E3A8A"/>
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0" y1="0" x2="256" y2="256" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F59E0B"/>
+      <stop offset="100%" stop-color="#EA580C"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Isometric Dimension Frame / Caliper Guides (with 10% safe margin) -->
+  <path d="M128 28 L216 79 L216 177 L128 228 L40 177 L40 79 Z" stroke="#38BDF8" stroke-width="3" stroke-dasharray="6 6" opacity="0.55"/>
+
+  <!-- Isometric Precision CAD Block - Top Face -->
+  <path d="M128 48 L198 88 L128 128 L58 88 Z" fill="url(#topFace)" stroke="#E0F2FE" stroke-width="2.5" stroke-linejoin="round"/>
+
+  <!-- Isometric Precision CAD Block - Left Face -->
+  <path d="M58 88 L128 128 L128 208 L58 168 Z" fill="url(#leftFace)" stroke="#BAE6FD" stroke-width="2.5" stroke-linejoin="round"/>
+
+  <!-- Isometric Precision CAD Block - Right Face -->
+  <path d="M128 128 L198 88 L198 168 L128 208 Z" fill="url(#rightFace)" stroke="#7DD3FC" stroke-width="2.5" stroke-linejoin="round"/>
+
+  <!-- Precision Center Bore (Top Face) -->
+  <ellipse cx="128" cy="88" rx="24" ry="13.8" fill="#0F172A" stroke="#E0F2FE" stroke-width="2.5"/>
+  <ellipse cx="128" cy="91" rx="18" ry="9.5" fill="none" stroke="#38BDF8" stroke-width="1.5" opacity="0.8"/>
+
+  <!-- Structural Gusset / Rib Feature Highlights -->
+  <path d="M78 120 L108 137 L108 177 L78 160 Z" fill="#0F172A" fill-opacity="0.35" stroke="#BAE6FD" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M178 120 L148 137 L148 177 L178 160 Z" fill="#0F172A" fill-opacity="0.45" stroke="#7DD3FC" stroke-width="2" stroke-linejoin="round"/>
+
+  <!-- CAD Coordinate Axes & Precision Caliper Markers -->
+  <!-- Z Axis (Top) -->
+  <line x1="128" y1="88" x2="128" y2="26" stroke="url(#accentGrad)" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="128" cy="26" r="5" fill="#F59E0B"/>
+
+  <!-- X Axis (Bottom Left) -->
+  <line x1="93" y1="148" x2="36" y2="181" stroke="url(#accentGrad)" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="36" cy="181" r="5" fill="#F59E0B"/>
+
+  <!-- Y Axis (Bottom Right) -->
+  <line x1="163" y1="148" x2="220" y2="181" stroke="url(#accentGrad)" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="220" cy="181" r="5" fill="#F59E0B"/>
+
+  <!-- Dimension Callout Line (Top Right) -->
+  <line x1="136" y1="38" x2="206" y2="78" stroke="#FBBF24" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="132" y1="43" x2="140" y2="33" stroke="#FBBF24" stroke-width="2.5" stroke-linecap="round"/>
+  <line x1="202" y1="83" x2="210" y2="73" stroke="#FBBF24" stroke-width="2.5" stroke-linecap="round"/>
+</svg>
