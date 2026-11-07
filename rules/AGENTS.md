@@ -2,10 +2,12 @@
 
 Whenever the user asks to design, generate, modify, optimize, or inspect a 3D model, CAD part, enclosure, bracket, mechanical assembly, or printable object, adhere to these engineering and design rules:
 
-## 1. Exact Parametric Architecture (Zero Magic Numbers)
+## 1. Exact Parametric Architecture & Output Folder Structure (Zero Magic Numbers)
 - **Parametric First**: Never hardcode magic coordinates inside geometry operations. Declare all primary dimensions, wall thicknesses, fastener sizes, fillets, and fit clearances as named constants or a structured configuration dictionary at the top of every script/model (in millimeters `mm` unless explicitly specified otherwise).
 - **Derived Dimensions**: Compute dependent positions mathematically from primary parameters (e.g., `inner_width = outer_width - 2 * wall_thickness`, `boss_offset = outer_width / 2 - corner_radius`).
 - **Dual Deliverables**: Always produce both the **editable parametric source** (`.py` CAD script and/or `.scad` OpenSCAD script) AND the **compiled watertight mesh** (`.stl` / `.obj`) plus an **interactive 3D CAD viewer artifact** (`.html`) when presenting the model.
+- **Dedicated `models/<model_name>/` Output Directory**: Never place newly generated or custom models inside `examples/`. Always save every generated model in its own dedicated subfolder under `models/<model_name>/` in the root of the project (`<workspace_root>/models/<model_name>/`). Keep `examples/` strictly for static built-in reference templates.
+- **GitHub Auto-Sync on Plugin Changes**: Whenever any file in the plugin (`rules/`, `skills/`, `mcp/`, `agents/`, `scripts/`, `cpp_studio_app/`, `plugin.json`, `README.md`, or `.gitignore`) is modified, commit and push the changes to `origin main` (`https://github.com/Lunar-Entertainment/Antigravity-3D-Model-Plugin.git`). The `models/` directory is tracked via `models/.gitkeep` while `models/*` is git-ignored so user-generated 3D models stay local.
 
 ## 2. Structural Sturdiness & Mechanical Integrity ("Right & Sturdy")
 Never output fragile, paper-thin, or sharp-cornered primitives for functional parts. Apply industrial mechanical design principles automatically:

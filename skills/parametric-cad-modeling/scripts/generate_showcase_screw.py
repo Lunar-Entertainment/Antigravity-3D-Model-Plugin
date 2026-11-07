@@ -244,7 +244,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate M12x3.0 Showcase Screw STL & OpenSCAD")
     parser.add_argument(
         "--out-dir",
-        default="/home/lunar/Documents/Projects/3d-model-plugin/examples/showcase_screw",
+        default="/home/lunar/Documents/Projects/3d-model-plugin/models/showcase_screw",
         help="Output directory for generated STL and SCAD files",
     )
     parser.add_argument(

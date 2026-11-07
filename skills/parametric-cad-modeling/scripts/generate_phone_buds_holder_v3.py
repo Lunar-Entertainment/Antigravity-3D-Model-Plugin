@@ -386,7 +386,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Generate V3 Phone + Buds3 Pro Holder Kit")
     parser.add_argument(
         "--out-dir",
-        default="/home/lunar/Documents/Projects/3d-model-plugin/examples/phone_buds_holder_v3",
+        default="/home/lunar/Documents/Projects/3d-model-plugin/models/phone_buds_holder_v3",
         help="Output directory",
     )
     parser.add_argument(

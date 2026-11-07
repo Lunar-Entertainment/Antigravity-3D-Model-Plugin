@@ -259,7 +259,7 @@ def build_goodwiners_back_plate(
 
 def main():
     out_dir = os.path.abspath(
-        os.path.join(SCRIPT_DIR, "..", "..", "..", "examples", "goodwiners_phone_buds_mount")
+        os.path.join(SCRIPT_DIR, "..", "..", "..", "models", "goodwiners_phone_buds_mount")
     )
     os.makedirs(out_dir, exist_ok=True)
 

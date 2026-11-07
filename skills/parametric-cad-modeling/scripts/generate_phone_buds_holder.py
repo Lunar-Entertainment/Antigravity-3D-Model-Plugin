@@ -828,7 +828,7 @@ def generate_phone_buds_holder_kit(
 
 
 if __name__ == "__main__":
-    out_dir = "/home/lunar/Documents/Projects/3d-model-plugin/examples/phone_buds_holder_v2"
+    out_dir = "/home/lunar/Documents/Projects/3d-model-plugin/models/phone_buds_holder_v2"
     live_html = "/home/lunar/.gemini/antigravity/brain/5ebe9d33-1018-46e0-aa40-eab205948e9d/live_cad_studio.html"
     paths = generate_phone_buds_holder_kit(out_dir, live_viewer_html=live_html)
     print("Generated 4-Way Phone + Buds3 Pro Holder Kit:", paths)

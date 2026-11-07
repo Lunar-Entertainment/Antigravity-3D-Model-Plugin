@@ -282,7 +282,7 @@ def generate_zero_support_gear_assembly(output_dir: str, live_viewer_html: str =
 
 
 if __name__ == "__main__":
-    out_dir = "/home/lunar/Documents/Projects/3d-model-plugin/examples/gear_crank_stand"
+    out_dir = "/home/lunar/Documents/Projects/3d-model-plugin/models/gear_crank_stand"
     live_html = "/home/lunar/.gemini/antigravity/brain/5ebe9d33-1018-46e0-aa40-eab205948e9d/live_cad_studio.html"
     res = generate_zero_support_gear_assembly(out_dir, live_viewer_html=live_html)
     print("Generated zero-support assembly parts:", res)
