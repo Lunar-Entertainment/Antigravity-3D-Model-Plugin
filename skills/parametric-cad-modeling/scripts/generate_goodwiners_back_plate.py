@@ -25,7 +25,8 @@ DEFAULT_PARAMS: Dict[str, float] = {
     "screw_hole_r_mm": 1.50,            # D = 3.00 mm clearance for BT2.6x8 / M2.6 / M3 corner screws
     "plate_width_mm": 55.00,            # Exact Goodwiners Back.stl width (-27.50 to +27.50 mm)
     "plate_height_mm": 80.00,           # Exact Goodwiners Back.stl height (-40.00 to +40.00 mm)
-    "base_thickness_mm": 14.00,         # Houses June's 12.5 mm wrist stud + locker_male dock
+    "base_thickness_mm": 8.50,          # Sleek 8.50 mm thickness (houses June's wrist stud + half-hex dock)
+    "buds_spine_thick_mm": 5.00,        # Sleek 5.00 mm spine (3.5 mm behind Z=8.50 Leg.stl plane)
 }
 
 
@@ -116,30 +117,32 @@ def build_goodwiners_back_plate(
     def z1_vault_fn(ix: int, iy: int, x: float, y: float) -> float:
         # Vaulted 46.5 deg self-supporting ceiling over Page 17 half-hex pockets (iy==9, ix in 6, 13)
         if iy in (9, 10) and ix in (7, 13):
-            return 9.70
-        return 3.20
+            return 7.60
+        return 2.50
 
     def z2_fn(ix: int, iy: int, x: float, y: float) -> float:
-        return 10.50
+        if iy in (9, 10) and ix in (7, 13):
+            return 8.00
+        return p["buds_spine_thick_mm"]  # 5.00 mm sleek spine
 
     def z3_deck_fn(ix: int, iy: int, x: float, y: float) -> float:
-        return p["base_thickness_mm"]  # 14.00 mm main Goodwiners mating deck
+        return p["base_thickness_mm"]  # 8.50 mm main Goodwiners mating deck
 
     def z4_features_fn(ix: int, iy: int, x: float, y: float) -> float:
         # Zone A (iy <= 3): Underneath Buds3 Pro Little Hands risers & 45 deg hook ramps
         if iy <= 1:
-            return 29.00
+            return 25.00
         if iy in (2, 3):
             if ix <= 1 or ix >= 19:
-                return 29.00
-            return 35.80
-        # Zone C (iy >= 5): Interior locating tabs & retainer alignment posts (+3.0 mm above Z=14.0 deck)
-        return p["base_thickness_mm"] + 3.00  # 17.00 mm
+                return 25.00
+            return 31.80
+        # Zone C (iy >= 5): Interior locating tabs & retainer alignment posts (+2.5 mm above Z=8.5 deck)
+        return p["base_thickness_mm"] + 2.50  # 11.00 mm
 
     def z5_top_fn(ix: int, iy: int, x: float, y: float) -> float:
         if iy <= 3:
-            return 36.80
-        return p["base_thickness_mm"] + 3.60
+            return 33.00
+        return p["base_thickness_mm"] + 3.00
 
     def active_fn(ix: int, iy: int, iz: int, xc: float, yc: float) -> bool:
         # ----------------------------------------------------------------------
