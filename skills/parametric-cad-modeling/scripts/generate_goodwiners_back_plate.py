@@ -155,10 +155,6 @@ def build_goodwiners_m10_connector(
     ny = len(ys) - 1
 
     def active_fn(ix: int, iy: int, iz: int, xc: float, yc: float) -> bool:
-        # Chamfer the 4 outer corners of the 44 x 30 mm block
-        if (ix == 0 or ix == nx - 1) and (iy == 0 or iy == ny - 1):
-            return False
-
         # Layer 0 (iz == 0, Z = 0.00..3.20 mm): Full base & side screw flanges
         if iz == 0:
             return True
