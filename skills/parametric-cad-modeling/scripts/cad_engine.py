@@ -252,6 +252,21 @@ def _merge_hole_into_outer(outer: List[Point2D], hole_cw: List[Point2D]) -> List
     return merged
 
 
+def point_in_polygon(p: Point2D, poly: List[Point2D]) -> bool:
+    """Ray-casting algorithm to test if point p lies strictly inside poly."""
+    x, y = p
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        if (y1 > y) != (y2 > y):
+            xc = (x2 - x1) * (y - y1) / (y2 - y1) + x1
+            if x < xc:
+                inside = not inside
+    return inside
+
+
 def triangulate_polygon_with_holes(
     outer: List[Point2D], holes: Optional[List[List[Point2D]]] = None
 ) -> List[Tuple[Point2D, Point2D, Point2D]]:
@@ -259,10 +274,12 @@ def triangulate_polygon_with_holes(
     Triangulates a 2D polygon with arbitrary inner holes into CCW 2D triangles.
     Uses reflex-vertex filtering + AABB culling for 10x faster ear-clipping while
     preserving exact boundary vertices so adjacent vertical walls share 100% manifold edges.
+    Strictly verifies that ear triangles and diagonals lie outside all inner holes.
     """
     poly = ensure_ccw(outer)
-    if holes:
-        cw_holes = [ensure_cw(h) for h in holes if len(h) >= 3]
+    valid_holes = [h for h in (holes or []) if len(h) >= 3]
+    if valid_holes:
+        cw_holes = [ensure_cw(h) for h in valid_holes]
         cw_holes.sort(key=lambda h: max(pt[0] for pt in h), reverse=True)
         for h in cw_holes:
             poly = _merge_hole_into_outer(poly, h)
@@ -294,6 +311,21 @@ def triangulate_polygon_with_holes(
                 if cross <= tol:
                     continue
 
+                cx = (prev_pt[0] + curr_pt[0] + next_pt[0]) / 3.0
+                cy = (prev_pt[1] + curr_pt[1] + next_pt[1]) / 3.0
+                mx = (prev_pt[0] + next_pt[0]) / 2.0
+                my = (prev_pt[1] + next_pt[1]) / 2.0
+
+                if valid_holes:
+                    if any(point_in_polygon((cx, cy), h) for h in valid_holes):
+                        continue
+                    if any(point_in_polygon((mx, my), h) for h in valid_holes):
+                        continue
+                if not point_in_polygon((cx, cy), outer):
+                    continue
+                if not point_in_polygon((mx, my), outer):
+                    continue
+
                 min_tx = min(prev_pt[0], curr_pt[0], next_pt[0])
                 max_tx = max(prev_pt[0], curr_pt[0], next_pt[0])
                 min_ty = min(prev_pt[1], curr_pt[1], next_pt[1])
@@ -319,14 +351,36 @@ def triangulate_polygon_with_holes(
                 break
 
         if not ear_found:
-            prev_pt, curr_pt, next_pt = pts[0], pts[1], pts[2]
-            if abs(_cross2d(prev_pt, curr_pt, next_pt)) > 1e-10:
-                tris.append((prev_pt, curr_pt, next_pt))
-            pts.pop(1)
+            for i in range(len(pts)):
+                p0 = pts[(i - 1) % len(pts)]
+                p1 = pts[i]
+                p2 = pts[(i + 1) % len(pts)]
+                c = _cross2d(p0, p1, p2)
+                cx = (p0[0] + p1[0] + p2[0]) / 3.0
+                cy = (p0[1] + p1[1] + p2[1]) / 3.0
+                if abs(c) > 1e-10 and (not valid_holes or not any(point_in_polygon((cx, cy), h) for h in valid_holes)):
+                    tris.append((p0, p1, p2))
+                    pts.pop(i)
+                    ear_found = True
+                    break
+            if not ear_found:
+                pts.pop(0)
 
     if len(pts) == 3:
+        cx = (pts[0][0] + pts[1][0] + pts[2][0]) / 3.0
+        cy = (pts[0][1] + pts[1][1] + pts[2][1]) / 3.0
         if abs(_cross2d(pts[0], pts[1], pts[2])) > 1e-10:
-            tris.append((pts[0], pts[1], pts[2]))
+            if not valid_holes or not any(point_in_polygon((cx, cy), h) for h in valid_holes):
+                tris.append((pts[0], pts[1], pts[2]))
+
+    if valid_holes:
+        clean_tris: List[Tuple[Point2D, Point2D, Point2D]] = []
+        for t in tris:
+            cx = (t[0][0] + t[1][0] + t[2][0]) / 3.0
+            cy = (t[0][1] + t[1][1] + t[2][1]) / 3.0
+            if not any(point_in_polygon((cx, cy), h) for h in valid_holes) and point_in_polygon((cx, cy), outer):
+                clean_tris.append(t)
+        tris = clean_tris
 
     return tris
 

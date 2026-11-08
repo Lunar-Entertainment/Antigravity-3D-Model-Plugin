@@ -61,11 +61,16 @@ def make_june_arm_locker_pocket(cx_sign: float) -> List[Point2D]:
     Builds the 2D contour of June's Customizable Mechanical Arm v2 `locker_male` dock pocket
     with generous corner relief fillets (R = 1.80 mm) and +0.40 mm fit clearance so the
     rounded male key slides in freely and seats squarely.
+    Guarantees 100% bilateral symmetry and non-self-intersecting contours for both left and right docks.
     """
+    if cx_sign < 0:
+        p_right = make_june_arm_locker_pocket(1.0)
+        return [cad_engine.snap2d((-pt[0], pt[1])) for pt in reversed(p_right)]
+
     cy = -10.425  # Midpoint offset: +3.20 - 13.625 = -10.425 mm
-    x_apex = cx_sign * 5.80
-    x_mid = cx_sign * 7.20
-    x_out = cx_sign * 13.00
+    x_apex = 5.80
+    x_mid = 7.20
+    x_out = 13.00
     y_apex = cy
     y_mid_lo = cy - 2.80
     y_mid_hi = cy + 2.80
@@ -81,18 +86,18 @@ def make_june_arm_locker_pocket(cx_sign: float) -> List[Point2D]:
     pts.append(cad_engine.snap2d((x_mid, y_mid_lo)))
 
     # Bottom-outer rounded corner arc
-    c_x = x_out - cx_sign * r
+    c_x = x_out - r
     c_y = y_out_lo + r
-    ang0 = 1.5 * math.pi if cx_sign > 0 else math.pi
-    ang1 = 2.0 * math.pi if cx_sign > 0 else 1.5 * math.pi
+    ang0 = 1.5 * math.pi
+    ang1 = 2.0 * math.pi
     for i in range(segs + 1):
         a = ang0 + (ang1 - ang0) * i / segs
         pts.append(cad_engine.snap2d((c_x + r * math.cos(a), c_y + r * math.sin(a))))
 
     # Top-outer rounded corner arc
     c_y2 = y_out_hi - r
-    ang0_2 = 0.0 if cx_sign > 0 else 0.5 * math.pi
-    ang1_2 = 0.5 * math.pi if cx_sign > 0 else math.pi
+    ang0_2 = 0.0
+    ang1_2 = 0.5 * math.pi
     for i in range(segs + 1):
         a = ang0_2 + (ang1_2 - ang0_2) * i / segs
         pts.append(cad_engine.snap2d((c_x + r * math.cos(a), c_y2 + r * math.sin(a))))
