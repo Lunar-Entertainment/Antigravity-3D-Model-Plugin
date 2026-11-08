@@ -52,16 +52,16 @@ def build_goodwiners_m10_connector(
     """
     # X grid lines (symmetric around X = 0.0, total width = 44.00 mm):
     # ix=0..3:   [-22.00..-15.00] Left 3.20 mm mounting flange with screw holes at X = -19.00
-    # ix=3..5:   [-15.00..-8.50]  Left raised 8.50 mm hub & Page 17 half-hex pocket (-12.25..-6.08)
+    # ix=3..5:   [-15.00..-8.50]  Left raised 8.50 mm hub & filleted half-hex pocket (-12.55..-6.15)
     # ix=5..9:   [-5.30..+5.30]   Center M10x1.5 female threaded bore patch around X = 0.00
-    # ix=9..11:  [+8.50..+15.00]  Right raised 8.50 mm hub & Page 17 half-hex pocket (+6.08..+12.25)
+    # ix=9..11:  [+8.50..+15.00]  Right raised 8.50 mm hub & filleted half-hex pocket (+6.15..+12.55)
     # ix=11..14: [+15.00..+22.00] Right 3.20 mm mounting flange with screw holes at X = +19.00
     xs = [
         -22.00,
         -20.50, -19.00, -17.50,
-        -15.00, -12.25, -8.50,
+        -15.00, -12.55, -8.50,
         -5.30, -2.60, 0.00, 2.60, 5.30,
-        8.50, 12.25, 15.00,
+        8.50, 12.55, 15.00,
         17.50, 19.00, 20.50,
         22.00,
     ]
@@ -127,17 +127,24 @@ def build_goodwiners_m10_connector(
                 )
             )
 
-    # 3. Exact Page 17 5-Sided Half-Hexagon Slanted Inner Walls on ix == 6 (-8.50 -> -6.08)
-    #    and ix == 12 (+8.50 -> +6.08) across iy in 1..5 (Y = -14.30 .. -6.55, midpoint Y = -10.425 at iy == 3):
+    # 3. Exact 5-Sided Half-Hexagon Slanted Inner Walls on ix == 6 (-8.50 -> -6.15)
+    #    and ix == 12 (+8.50 -> +6.15) across iy in 1..5 (Y = -14.30 .. -6.55, midpoint Y = -10.425 at iy == 3):
     #    At iy == 1 (-14.30) and iy == 5 (-6.55), X is ±8.50 mm.
-    #    At iy == 3 (-10.425), X is ±6.08 mm.
+    #    At iy == 3 (-10.425), X is ±6.15 mm.
     #    At iy == 2 (-11.925) and iy == 4 (-8.925), linear interpolation along the half-hexagon slant gives X = ±7.01 mm!
     overrides[(6, 2)] = (-7.01, -11.925)
-    overrides[(6, 3)] = (-6.08, -10.425)
+    overrides[(6, 3)] = (-6.15, -10.425)
     overrides[(6, 4)] = (-7.01, -8.925)
     overrides[(12, 2)] = (7.01, -11.925)
-    overrides[(12, 3)] = (6.08, -10.425)
+    overrides[(12, 3)] = (6.15, -10.425)
     overrides[(12, 4)] = (7.01, -8.925)
+
+    # 4. Rounded / filleted outer corners for the two half-hex dock pockets
+    #    (Relieves sharp 90° corners to seat male arm lockers with filleted/rounded corners)
+    overrides[(5, 1)] = (-11.20, -13.50)
+    overrides[(5, 5)] = (-11.20, -7.35)
+    overrides[(13, 1)] = (11.20, -13.50)
+    overrides[(13, 5)] = (11.20, -7.35)
 
     def z0_fn(ix: int, iy: int, x: float, y: float) -> float:
         return 0.0  # Flat bottom mating face against Back.stl
