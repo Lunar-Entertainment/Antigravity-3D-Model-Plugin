@@ -294,6 +294,31 @@ def main():
     print(f"Saved: {path_nut_stl} ({len(nut.triangles)} tris)")
     print(f"Saved: {path_pack_stl} ({len(pack4x.triangles)} tris)")
 
+    # Auto-sync Live CAD Studio in active conversation
+    try:
+        import generate_viewer
+        base_brain = os.path.expanduser("~/.gemini/jetski/brain")
+        target_dir = None
+        if os.path.isdir(base_brain):
+            candidate_dirs = []
+            for root, dirs, _ in os.walk(base_brain):
+                if ".system_generated" in dirs or os.path.isfile(os.path.join(root, "live_cad_studio.html")):
+                    candidate_dirs.append(root)
+            if candidate_dirs:
+                candidate_dirs.sort(key=lambda d: os.path.getmtime(d), reverse=True)
+                target_dir = candidate_dirs[0]
+        if target_dir:
+            out_screws_html = os.path.join(target_dir, "screws_viewer.html")
+            generate_viewer.sync_live_viewer(
+                mesh_filepath=path_pack_stl,
+                output_html=out_screws_html,
+                title="Goodwiners M2.8 Fastener Pack (4x Screws + 4x Nuts)",
+                subtitle="Auto-Synced Live CAD Studio · Zero Supports",
+            )
+            print(f"Auto-synced Fasteners Studio: {out_screws_html}")
+    except Exception as e:
+        print(f"Viewer sync notice: {e}")
+
 
 if __name__ == "__main__":
     main()

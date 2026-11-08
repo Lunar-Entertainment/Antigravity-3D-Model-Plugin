@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 /home/lunar/Documents/Projects/3d-model-plugin/scripts/live_sync_hook.py",
+            "command": "python3 scripts/live_sync_hook.py",
             "timeout": 10
           }
         ]

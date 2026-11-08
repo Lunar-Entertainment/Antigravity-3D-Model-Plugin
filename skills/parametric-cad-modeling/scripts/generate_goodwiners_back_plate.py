@@ -278,6 +278,31 @@ def main():
     print(f"Saved: {path_conn_stl} ({len(b_conn.triangles)} tris)")
     print(f"Saved: {path_conn_3mf}")
 
+    # Auto-sync Live CAD Studio in active conversation
+    try:
+        import generate_viewer
+        base_brain = os.path.expanduser("~/.gemini/jetski/brain")
+        target_dir = None
+        if os.path.isdir(base_brain):
+            candidate_dirs = []
+            for root, dirs, _ in os.walk(base_brain):
+                if ".system_generated" in dirs or os.path.isfile(os.path.join(root, "live_cad_studio.html")):
+                    candidate_dirs.append(root)
+            if candidate_dirs:
+                candidate_dirs.sort(key=lambda d: os.path.getmtime(d), reverse=True)
+                target_dir = candidate_dirs[0]
+        if target_dir:
+            out_html = os.path.join(target_dir, "live_cad_studio.html")
+            generate_viewer.sync_live_viewer(
+                mesh_filepath=path_conn_stl,
+                output_html=out_html,
+                title="Goodwiners M10 Connector Adapter v2",
+                subtitle="Auto-Synced Live CAD Studio · Filleted Dock Pockets",
+            )
+            print(f"Auto-synced Live CAD Studio: {out_html}")
+    except Exception as e:
+        print(f"Viewer sync notice: {e}")
+
 
 if __name__ == "__main__":
     main()

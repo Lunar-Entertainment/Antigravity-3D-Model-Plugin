@@ -71,6 +71,16 @@ def main() -> None:
         payload = json.loads(raw_input)
         artifact_dir = payload.get("artifactDirectoryPath")
         if not artifact_dir:
+            base_brain = os.path.expanduser("~/.gemini/jetski/brain")
+            if os.path.isdir(base_brain):
+                candidate_dirs = []
+                for root, dirs, _ in os.walk(base_brain):
+                    if ".system_generated" in dirs or os.path.isfile(os.path.join(root, "live_cad_studio.html")):
+                        candidate_dirs.append(root)
+                if candidate_dirs:
+                    candidate_dirs.sort(key=lambda d: os.path.getmtime(d), reverse=True)
+                    artifact_dir = candidate_dirs[0]
+        if not artifact_dir:
             sys.stdout.write("{}\n")
             return
 
