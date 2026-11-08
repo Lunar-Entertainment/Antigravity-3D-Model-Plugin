@@ -100,6 +100,14 @@ METRIC_FASTENERS: Dict[str, Dict[str, float]] = {
         "heatset_hole_d": 12.5, "heatset_boss_od": 23.0, "heatset_depth": 16.0,
         "selftap_hole_d": 9.0,
     },
+    "M12": {
+        "nominal_d": 12.0, "pitch": 1.75,
+        "clearance_close": 12.5, "clearance_medium": 13.5, "clearance_free": 14.5,
+        "cbore_d": 20.5, "cbore_depth": 12.2, "csink_d": 25.0,
+        "nut_flats": 18.3, "nut_thickness": 10.4,
+        "heatset_hole_d": 14.8, "heatset_boss_od": 27.0, "heatset_depth": 19.0,
+        "selftap_hole_d": 10.8,
+    },
 }
 
 MATERIAL_PROPS: Dict[str, Dict[str, float]] = {
@@ -255,10 +263,10 @@ TOOLS_SCHEMA = [
     {
         "name": "cad_generate_parametric_part",
         "description": (
-            "Generate an exact-dimension, 100% watertight manifold 3D model (.stl, .scad, .obj) from "
-            "11 parametric engineering templates: 'enclosure_box', 'enclosure_lid', 'l_bracket', 'flanged_spacer', "
+            "Generate an exact-dimension, 100% watertight manifold 3D model (.stl, .3mf, .scad, .obj) from "
+            "12 parametric engineering templates: 'enclosure_box', 'enclosure_lid', 'l_bracket', 'flanged_spacer', "
             "'grid_organizer', 'mounting_plate', 'spur_gear', 'saddle_clamp', 'bearing_pillow_block', "
-            "'pcb_standoff_frame', or 'dovetail_rail_mount'. Streams live stage updates if live_viewer_html is set."
+            "'pcb_standoff_frame', 'dovetail_rail_mount', or 'threaded_fastener'. Streams live stage updates if live_viewer_html is set."
         ),
         "inputSchema": {
             "type": "object",
@@ -284,6 +292,10 @@ TOOLS_SCHEMA = [
                     "type": "string",
                     "description": "Optional absolute path for the output .obj mesh",
                 },
+                "output_3mf": {
+                    "type": "string",
+                    "description": "Optional absolute path for the output .3mf package (Bambu Studio / OrcaSlicer ready)",
+                },
                 "live_viewer_html": {
                     "type": "string",
                     "description": "Optional path to <artifact_dir>/live_cad_studio.html to stream live model updates into",
@@ -299,16 +311,17 @@ TOOLS_SCHEMA = [
     {
         "name": "cad_verify_mesh",
         "description": (
-            "Run a comprehensive engineering & DFM quality audit on any .stl or .obj 3D model: verifies "
-            "manifold watertightness (0 open/non-manifold edges), checks exact bounding box against target "
-            "dimensions, computes volume, center of mass, filament/metal weight, and overhang ratios (>45 deg)."
+            "Run a comprehensive engineering, bore/thread metrology, & DFM quality audit on any .stl, .obj, or .3mf 3D model: "
+            "verifies manifold watertightness (0 open/non-manifold edges, Euler characteristic, floating shell check), "
+            "automatically detects cylindrical holes and ISO metric threads (center XY, min/max diameter, Z span), "
+            "checks exact bounding box against target dimensions, and optionally auto-repairs mesh defects."
         ),
         "inputSchema": {
             "type": "object",
             "properties": {
                 "filepath": {
                     "type": "string",
-                    "description": "Absolute path to the .stl or .obj mesh file",
+                    "description": "Absolute path to the .stl, .obj, or .3mf mesh file",
                 },
                 "target_dimensions_mm": {
                     "type": "array",
@@ -318,6 +331,10 @@ TOOLS_SCHEMA = [
                 "tolerance_mm": {
                     "type": "number",
                     "description": "Allowed dimensional deviation in mm (default: 0.1)",
+                },
+                "repair_output_stl": {
+                    "type": "string",
+                    "description": "Optional output .stl path to write an auto-repaired mesh (welds micro-gaps, removes degenerate/duplicate faces, fixes inverted normals)",
                 },
             },
             "required": ["filepath"],
@@ -375,10 +392,12 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         out_stl = str(arguments["output_stl"])
         out_scad = arguments.get("output_scad")
         out_obj = arguments.get("output_obj")
+        out_3mf = arguments.get("output_3mf")
         live_html = arguments.get("live_viewer_html")
         delay_sec = float(arguments.get("stream_stages_delay_sec", 0.0))
         res = cad_engine.generate_part(
             part_type, params, out_stl, out_scad, out_obj,
+            output_3mf=out_3mf,
             live_viewer_html=live_html, stream_stages_delay_sec=delay_sec
         )
         return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
@@ -387,7 +406,8 @@ def handle_tool_call(name: str, arguments: Dict[str, Any]) -> Dict[str, Any]:
         filepath = str(arguments["filepath"])
         target_dims = arguments.get("target_dimensions_mm")
         tol = float(arguments.get("tolerance_mm", 0.1))
-        res = verify_model.audit_mesh(filepath, target_dims, tol)
+        repair_out = arguments.get("repair_output_stl")
+        res = verify_model.audit_mesh(filepath, target_dims, tol, repair_out=repair_out)
         return {"content": [{"type": "text", "text": json.dumps(res, indent=2)}]}
 
     if name == "cad_render_interactive_viewer":
