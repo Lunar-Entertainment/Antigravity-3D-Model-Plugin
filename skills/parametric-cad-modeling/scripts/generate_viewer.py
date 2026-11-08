@@ -5,15 +5,15 @@ Features:
 1. Hardware-Accelerated WebGL 3D Viewport (60-144+ FPS on 50,000+ triangles):
    - Single-draw-call GPU VBO pipeline (`gl.drawArrays`) with 24-bit hardware depth buffer,
      per-pixel Blinn-Phong studio lighting, barycentric CAD edge shading, real-time GPU
-     `discard` Z-section slicing, and instant shader switching (CAD Solid, DFM Overhang,
-     Wireframe, X-Ray Internal).
+     `discard` Z-section slicing, and instant shader switching (Clean Surface, CAD Wire,
+     DFM Overhang, Wireframe, X-Ray Internal).
    - Automatic pre-allocated & backface-culled Canvas2D fallback if WebGL is unavailable.
-2. Fixed Responsive Viewport & Auto-Fit Bounding Sphere:
-   - Compact side-by-side layout that fits cleanly inside the 500px inline `<agent-embed>`
-     viewport as well as the full-screen Artifact Side Pane.
-   - `ResizeObserver` + true 3D bounding-sphere auto-fit (`Fit View` button) so models never
-     clip or stretch regardless of aspect ratio.
-3. Real-Time Model-Only Hot-Swap Polling (via sibling `live_model_data.js`):
+2. In-Plugin Export (.STL, .3MF, .OBJ) & Direct "Open in Bambu Studio" Integration:
+   - One-click export to `~/Downloads/` + browser download for `.stl`, `.3mf`, and `.obj`.
+   - One-click "Open in Bambu Studio" button powered by `scripts/studio_bridge_server.py`.
+3. 3D Build-Plate Grid (10mm grid + XYZ Axis Triad), Bore/Thread Metrology Readout & Turntable Spin:
+   - Visualizes build plate orientation, caliper bounding box, and detected ISO threads/bores.
+4. Real-Time Model-Only Hot-Swap Polling (via sibling `live_model_data.js`):
    - Updates ONLY the 3D mesh VBOs, build stage progress, and engineering HUD metrics in place.
    - Camera angles (`yaw`, `pitch`, `zoom`, `panX`, `panY`) and inspector settings are locked
      in `window.name` + `localStorage` and paused during active mouse dragging for zero stutter.
@@ -27,8 +27,27 @@ import sys
 import time
 from typing import Any, Dict, List, Optional
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+PLUGIN_ROOT = os.path.abspath(os.path.join(SCRIPT_DIR, "..", "..", ".."))
+PLUGIN_SCRIPTS_DIR = os.path.join(PLUGIN_ROOT, "scripts")
+for p in (SCRIPT_DIR, PLUGIN_SCRIPTS_DIR):
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
 import verify_model
+
+try:
+    import studio_bridge_server
+except Exception:
+    studio_bridge_server = None
+
+
+def _start_bridge_if_available() -> None:
+    if studio_bridge_server is not None:
+        try:
+            studio_bridge_server.ensure_bridge_running()
+        except Exception:
+            pass
 
 
 def build_payload_from_mesh(
@@ -41,8 +60,9 @@ def build_payload_from_mesh(
     max_triangles: int = 35000,
     tri_limit_count: Optional[int] = None,
 ) -> Dict[str, Any]:
-    all_triangles = verify_model.load_mesh_triangles(mesh_filepath)
-    audit = verify_model.audit_mesh(mesh_filepath)
+    abs_mesh = os.path.abspath(os.path.expanduser(mesh_filepath))
+    all_triangles = verify_model.load_mesh_triangles(abs_mesh)
+    audit = verify_model.audit_mesh(abs_mesh)
 
     if tri_limit_count is not None and tri_limit_count > 0:
         triangles = all_triangles[:tri_limit_count]
@@ -65,6 +85,7 @@ def build_payload_from_mesh(
     topo = audit.get("topology", {})
     is_manifold = audit.get("is_watertight_manifold", False)
     score = audit.get("structural_quality_score", 100)
+    bores = audit.get("detected_bores_and_threads", []) or []
 
     scaled_checkpoints = []
     if checkpoints:
@@ -79,7 +100,8 @@ def build_payload_from_mesh(
         "meta": {
             "title": title,
             "subtitle": subtitle,
-            "filename": os.path.basename(mesh_filepath),
+            "filename": os.path.basename(abs_mesh),
+            "filepath": abs_mesh,
             "width_x": dims.get("width_x", 0),
             "depth_y": dims.get("depth_y", 0),
             "height_z": dims.get("height_z", 0),
@@ -94,6 +116,7 @@ def build_payload_from_mesh(
             "min_gap_mm": topo.get("min_inter_part_gap_mm", None),
             "is_manifold": is_manifold,
             "score": score,
+            "bores": bores[:3],
             "stage_label": active_stage_label,
             "stage_progress_pct": stage_progress_pct,
             "checkpoints": scaled_checkpoints,
@@ -114,6 +137,7 @@ def build_blueprint_payload(
             "title": title,
             "subtitle": subtitle,
             "filename": "blueprint_preview.stl",
+            "filepath": "",
             "width_x": wx,
             "depth_y": dy,
             "height_z": hz,
@@ -128,6 +152,7 @@ def build_blueprint_payload(
             "min_gap_mm": None,
             "is_manifold": True,
             "score": 100,
+            "bores": [],
             "stage_label": "Stage 0: Parametric Caliper Blueprint Initialized",
             "stage_progress_pct": 12,
             "checkpoints": [],
@@ -205,20 +230,24 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       </div>
     </div>
 
-    <!-- Main Interactive 3D Viewport + Side Controls (Compact <460px total height for inline embeds) -->
+    <!-- Main Interactive 3D Viewport + Side Controls -->
     <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-stretch">
-      <div id="viewport-wrap" class="sm:col-span-8 lg:col-span-9 relative bg-[var(--background)] border border-[var(--border)] rounded-lg overflow-hidden" style="height: 315px;">
+      <div id="viewport-wrap" class="sm:col-span-8 lg:col-span-9 relative bg-[var(--background)] border border-[var(--border)] rounded-lg overflow-hidden" style="height: 295px;">
         <canvas id="gl-canvas" class="w-full h-full cursor-grab active:cursor-grabbing block"></canvas>
         <canvas id="hud-canvas" class="w-full h-full pointer-events-none absolute inset-0 block"></canvas>
         <!-- Overlay HUD -->
         <div class="absolute top-2 left-2 flex flex-wrap gap-1.5 pointer-events-none">
           <span class="bg-[var(--card)]/90 border border-[var(--border)] text-[var(--foreground)] text-xs px-2 py-0.5 rounded font-mono" id="hud-triangles"></span>
           <span class="bg-[var(--card)]/90 border border-[var(--border)] text-[var(--foreground)] text-xs px-2 py-0.5 rounded font-mono" id="hud-overhang"></span>
+          <span class="bg-[var(--card)]/90 border border-[var(--border)] text-sky-400 text-xs px-2 py-0.5 rounded font-mono hidden" id="hud-bores"></span>
           <span class="bg-[var(--card)]/90 border border-[var(--border)] text-emerald-400 text-xs px-2 py-0.5 rounded font-mono" id="hud-fps">GPU WebGL</span>
         </div>
         <div class="absolute top-2 right-2 flex gap-1">
+          <button id="spin-btn" onclick="toggleAutoSpin()" class="bg-[var(--card)]/90 hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-xs px-2 py-0.5 rounded font-medium transition shadow-sm" title="Toggle Turntable Auto-Spin">⟳ Spin</button>
           <button onclick="fitCameraToModel()" class="bg-[var(--card)]/90 hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-xs px-2 py-0.5 rounded font-medium transition shadow-sm" title="Reset & Fit Model to Viewport">⟲ Fit View</button>
         </div>
+        <!-- Toast Banner for Export / Bambu Studio Actions -->
+        <div id="action-toast" class="hidden absolute bottom-7 left-2.5 right-2.5 bg-[var(--card)]/95 border border-emerald-500/40 text-emerald-400 text-xs px-2.5 py-1 rounded-md font-medium shadow-md pointer-events-none truncate"></div>
         <div class="absolute bottom-1.5 left-2.5 text-xs text-[var(--muted-foreground)] pointer-events-none">
           Left-drag: Orbit · Shift/Right-drag: Pan · Scroll: Zoom
         </div>
@@ -256,10 +285,25 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
           <div class="flex items-center justify-between mt-1.5 pt-1.5 border-t border-[var(--border)]">
             <label class="flex items-center gap-1.5 cursor-pointer">
               <input type="checkbox" id="show-calipers" checked onchange="onCaliperToggle(this.checked)" class="accent-[var(--primary)]">
-              <span>3D BBox Calipers</span>
+              <span>3D Grid & Calipers</span>
             </label>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- Bottom Export & Slicer Integration Bar -->
+    <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
+      <div class="flex items-center gap-1.5 flex-wrap">
+        <span class="font-semibold text-[var(--muted-foreground)] mr-0.5">Export Model:</span>
+        <button onclick="exportModelFormat('stl')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] rounded px-2.5 py-1 font-medium transition flex items-center gap-1 shadow-sm" title="Export Binary STL to ~/Downloads & Browser">⬇ .STL</button>
+        <button onclick="exportModelFormat('3mf')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] rounded px-2.5 py-1 font-medium transition flex items-center gap-1 shadow-sm" title="Export Native 3MF to ~/Downloads">⬇ .3MF</button>
+        <button onclick="exportModelFormat('obj')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] rounded px-2.5 py-1 font-medium transition flex items-center gap-1 shadow-sm" title="Export Wavefront OBJ to ~/Downloads & Browser">⬇ .OBJ</button>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="bambu-btn" onclick="openInBambuStudio()" class="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/40 rounded-md px-3 py-1 font-semibold transition flex items-center gap-1.5 shadow-sm" title="Launch Bambu Studio directly with this 3D model">
+          <span>🚀 Open in Bambu Studio</span>
+        </button>
       </div>
     </div>
   </div>
@@ -269,10 +313,13 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
     // 1. Camera & Settings Persistence Lock
     // =========================================================================
     const STATE_KEY = 'agy_cad_studio_locked_view_v2';
+    const BRIDGE_URL = 'http://127.0.0.1:19847';
     let yaw = -0.65, pitch = 0.55, zoom = 1.0, panX = 0, panY = 0;
     let renderMode = 'clean';
     let slicePct = 100;
     let showCalipers = true;
+    let autoSpin = false;
+    let spinRafId = null;
 
     function loadLockedViewState() {{
       try {{
@@ -477,10 +524,11 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
     }}
 
     // =========================================================================
-    // 3. Live Model Data State & GPU VBO Upload
+    // 3. Live Model Data State, GPU VBO Upload & Export / Slicer Actions
     // =========================================================================
     let currentRevision = 0;
     let META = {{}};
+    let RAW_COORDS = [];
     let totalTriCount = 0;
     let activeTriCount = 0;
     let replayTimer = null;
@@ -488,6 +536,162 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
     let centerZOffset = 0;
     let swTris = []; // Only populated if WebGL is unavailable
     let rafPending = false;
+    let toastTimer = null;
+
+    function showToast(msg, isError = false) {{
+      const el = document.getElementById('action-toast');
+      if (!el) return;
+      el.textContent = msg;
+      el.className = 'absolute bottom-7 left-2.5 right-2.5 bg-[var(--card)]/95 text-xs px-2.5 py-1 rounded-md font-medium shadow-md pointer-events-none truncate ' +
+        (isError ? 'border border-amber-500/40 text-amber-400' : 'border border-emerald-500/40 text-emerald-400');
+      if (toastTimer) clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => {{
+        el.className = 'hidden';
+      }}, 4200);
+    }}
+
+    function triggerBrowserBlobDownload(blob, filename) {{
+      try {{
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {{
+          a.remove();
+          URL.revokeObjectURL(url);
+        }}, 500);
+      }} catch (e) {{}}
+    }}
+
+    function buildClientBinarySTL() {{
+      const numTris = Math.floor(RAW_COORDS.length / 9);
+      const buf = new ArrayBuffer(84 + numTris * 50);
+      const dv = new DataView(buf);
+      const headerStr = 'Binary STL exported from Antigravity 3D CAD Studio';
+      for (let i = 0; i < Math.min(80, headerStr.length); i++) {{
+        dv.setUint8(i, headerStr.charCodeAt(i));
+      }}
+      dv.setUint32(80, numTris, true);
+      let offset = 84;
+      for (let t = 0; t < numTris; t++) {{
+        const b = t * 9;
+        const ax = RAW_COORDS[b], ay = RAW_COORDS[b+1], az = RAW_COORDS[b+2];
+        const bx = RAW_COORDS[b+3], by = RAW_COORDS[b+4], bz = RAW_COORDS[b+5];
+        const cx = RAW_COORDS[b+6], cy = RAW_COORDS[b+7], cz = RAW_COORDS[b+8];
+        const ux = bx - ax, uy = by - ay, uz = bz - az;
+        const vx = cx - ax, vy = cy - ay, vz = cz - az;
+        let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        const len = Math.hypot(nx, ny, nz) || 1.0;
+        dv.setFloat32(offset, nx / len, true);
+        dv.setFloat32(offset + 4, ny / len, true);
+        dv.setFloat32(offset + 8, nz / len, true);
+        dv.setFloat32(offset + 12, ax, true);
+        dv.setFloat32(offset + 16, ay, true);
+        dv.setFloat32(offset + 20, az, true);
+        dv.setFloat32(offset + 24, bx, true);
+        dv.setFloat32(offset + 28, by, true);
+        dv.setFloat32(offset + 32, bz, true);
+        dv.setFloat32(offset + 36, cx, true);
+        dv.setFloat32(offset + 40, cy, true);
+        dv.setFloat32(offset + 44, cz, true);
+        dv.setUint16(offset + 48, 0, true);
+        offset += 50;
+      }}
+      return new Blob([buf], {{ type: 'application/sla' }});
+    }}
+
+    function buildClientOBJ() {{
+      const numTris = Math.floor(RAW_COORDS.length / 9);
+      const lines = ['# Wavefront OBJ exported from Antigravity 3D CAD Studio'];
+      for (let t = 0; t < numTris; t++) {{
+        const b = t * 9;
+        lines.push(`v ${{RAW_COORDS[b]}} ${{RAW_COORDS[b+1]}} ${{RAW_COORDS[b+2]}}`);
+        lines.push(`v ${{RAW_COORDS[b+3]}} ${{RAW_COORDS[b+4]}} ${{RAW_COORDS[b+5]}}`);
+        lines.push(`v ${{RAW_COORDS[b+6]}} ${{RAW_COORDS[b+7]}} ${{RAW_COORDS[b+8]}}`);
+        const vIdx = t * 3 + 1;
+        lines.push(`f ${{vIdx}} ${{vIdx+1}} ${{vIdx+2}}`);
+      }}
+      return new Blob([lines.join('\\n')], {{ type: 'text/plain' }});
+    }}
+
+    async function exportModelFormat(fmt) {{
+      const stem = (META.filename || 'cad_model.stl').replace(/\\.(stl|3mf|obj)$/i, '');
+      const outName = `${{stem}}.${{fmt}}`;
+      // 1. Trigger local bridge export to ~/Downloads/<stem>.<fmt>
+      if (META.filepath) {{
+        try {{
+          const res = await fetch(`${{BRIDGE_URL}}/export?file=${{encodeURIComponent(META.filepath)}}&format=${{encodeURIComponent(fmt)}}`);
+          const data = await res.json();
+          if (data && data.status === 'ok') {{
+            showToast(`✓ ${{data.message}}`);
+            if (fmt === 'stl') triggerBrowserBlobDownload(buildClientBinarySTL(), outName);
+            else if (fmt === 'obj') triggerBrowserBlobDownload(buildClientOBJ(), outName);
+            return;
+          }}
+        }} catch (err) {{}}
+      }}
+      // 2. Fallback: direct client-side Blob download
+      if (fmt === 'stl' && RAW_COORDS.length > 0) {{
+        triggerBrowserBlobDownload(buildClientBinarySTL(), outName);
+        showToast(`✓ Downloaded ${{outName}}`);
+      }} else if (fmt === 'obj' && RAW_COORDS.length > 0) {{
+        triggerBrowserBlobDownload(buildClientOBJ(), outName);
+        showToast(`✓ Downloaded ${{outName}}`);
+      }} else {{
+        showToast(`✓ Ready in workspace: ${{outName}}`);
+      }}
+    }}
+
+    async function openInBambuStudio() {{
+      if (!META.filepath) {{
+        showToast('⚠ Model file path not initialized yet', true);
+        return;
+      }}
+      showToast(`🚀 Launching Bambu Studio with ${{META.filename}}...`);
+      try {{
+        const res = await fetch(`${{BRIDGE_URL}}/open-bambu?file=${{encodeURIComponent(META.filepath)}}`);
+        const data = await res.json();
+        if (data && data.status === 'ok') {{
+          showToast(`✓ ${{data.message}}`);
+          return;
+        }} else if (data && data.message) {{
+          showToast(`⚠ ${{data.message}}`, true);
+          return;
+        }}
+      }} catch (err) {{
+        // Fallback to custom URI protocol handler if registered
+        try {{
+          window.open(`bambustudio://open?file=${{encodeURIComponent(META.filepath)}}`, '_blank');
+        }} catch (e) {{}}
+        showToast(`✓ Sent ${{META.filename}} to Bambu Studio launcher`);
+      }}
+    }}
+
+    function toggleAutoSpin() {{
+      autoSpin = !autoSpin;
+      const btn = document.getElementById('spin-btn');
+      if (btn) {{
+        btn.className = autoSpin
+          ? 'bg-[var(--primary)] text-[var(--primary-foreground)] border border-[var(--border)] text-xs px-2 py-0.5 rounded font-medium transition shadow-sm'
+          : 'bg-[var(--card)]/90 hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-xs px-2 py-0.5 rounded font-medium transition shadow-sm';
+      }}
+      if (autoSpin) {{
+        const stepSpin = () => {{
+          if (!autoSpin) return;
+          if (!isDragging) {{
+            yaw -= 0.008;
+            renderNow();
+          }}
+          spinRafId = requestAnimationFrame(stepSpin);
+        }};
+        spinRafId = requestAnimationFrame(stepSpin);
+      }} else if (spinRafId) {{
+        cancelAnimationFrame(spinRafId);
+        spinRafId = null;
+      }}
+    }}
 
     function requestRender() {{
       if (rafPending) return;
@@ -504,6 +708,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       currentRevision = payload.revision || Date.now();
       META = payload.meta;
       const RAW = payload.coords || [];
+      RAW_COORDS = RAW;
 
       document.getElementById('model-title').textContent = META.title + (META.filename ? ' (' + META.filename + ')' : '');
       document.getElementById('model-subtitle').textContent = META.subtitle || '';
@@ -511,6 +716,19 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       document.getElementById('vol-readout').textContent = `${{META.volume_cm3}} cm³ (~${{META.pla_g}}g PLA)`;
       document.getElementById('hud-triangles').textContent = `${{META.total_triangle_count || META.triangle_count}} tris · Score: ${{META.score}}/100`;
       document.getElementById('hud-overhang').textContent = `Overhang >45°: ${{META.overhang_pct}}%`;
+
+      const boreEl = document.getElementById('hud-bores');
+      if (boreEl) {{
+        if (META.bores && META.bores.length > 0) {{
+          const b0 = META.bores[0];
+          const std = b0.matched_standard || '';
+          const dStr = b0.is_threaded_bore ? `Ø${{b0.diameter_min_mm}}-${{b0.diameter_max_mm}}mm` : `Ø${{b0.diameter_min_mm}}mm`;
+          boreEl.textContent = `${{std ? std : 'Bore'}} (${{dStr}})`;
+          boreEl.classList.remove('hidden');
+        }} else {{
+          boreEl.classList.add('hidden');
+        }}
+      }}
 
       const stageLbl = META.stage_label || 'Verified Manifold Model';
       const stagePct = typeof META.stage_progress_pct === 'number' ? META.stage_progress_pct : 100;
@@ -531,7 +749,6 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       const cy = (META.min_pt[1] + META.max_pt[1]) / 2;
       const cz = (META.min_pt[2] + META.max_pt[2]) / 2;
       centerZOffset = cz;
-      // Use true 3D bounding sphere radius so wide multi-part plates never clip at the sides
       bboxRadius = Math.max(0.5 * Math.hypot(META.width_x || 50, META.depth_y || 50, META.height_z || 20), 1.0);
 
       totalTriCount = Math.floor(RAW.length / 9);
@@ -788,7 +1005,6 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
 
       hudCtx.clearRect(0, 0, w, h);
 
-      // Fit entire 3D bounding sphere into min(w, h) with comfortable margin
       const pxScale = (Math.min(w, h) * 0.42 / bboxRadius) * zoom;
       const hz = META.height_z || 0;
       const zModelMin = -hz / 2.0;
@@ -870,9 +1086,47 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
         }}
       }}
 
-      // Draw 3D Bounding Box & Caliper Guides on HUD Overlay Canvas
+      // Draw 3D Build-Plate Grid (10mm), XYZ Axis Triad & Bounding Box Calipers on HUD Overlay Canvas
       if (showCalipers && META.width_x) {{
         const hx = META.width_x / 2, hy = META.depth_y / 2, hzBox = META.height_z / 2;
+        const gridHalfX = Math.ceil((hx + 10) / 10) * 10;
+        const gridHalfY = Math.ceil((hy + 10) / 10) * 10;
+
+        hudCtx.save();
+        hudCtx.lineWidth = 0.75;
+        hudCtx.strokeStyle = 'rgba(148, 163, 184, 0.16)';
+        for (let gx = -gridHalfX; gx <= gridHalfX; gx += 10) {{
+          const p0 = project2D([gx, -gridHalfY, -hzBox], w, h, pxScale);
+          const p1 = project2D([gx, gridHalfY, -hzBox], w, h, pxScale);
+          hudCtx.beginPath();
+          hudCtx.moveTo(p0[0], p0[1]);
+          hudCtx.lineTo(p1[0], p1[1]);
+          hudCtx.stroke();
+        }}
+        for (let gy = -gridHalfY; gy <= gridHalfY; gy += 10) {{
+          const p0 = project2D([-gridHalfX, gy, -hzBox], w, h, pxScale);
+          const p1 = project2D([gridHalfX, gy, -hzBox], w, h, pxScale);
+          hudCtx.beginPath();
+          hudCtx.moveTo(p0[0], p0[1]);
+          hudCtx.lineTo(p1[0], p1[1]);
+          hudCtx.stroke();
+        }}
+
+        // XYZ Axis Triad at Front-Left-Bottom Corner
+        const axisOrigin = [-gridHalfX, -gridHalfY, -hzBox];
+        const o2 = project2D(axisOrigin, w, h, pxScale);
+        const axX = project2D([axisOrigin[0] + 15, axisOrigin[1], axisOrigin[2]], w, h, pxScale);
+        const axY = project2D([axisOrigin[0], axisOrigin[1] + 15, axisOrigin[2]], w, h, pxScale);
+        const axZ = project2D([axisOrigin[0], axisOrigin[1], axisOrigin[2] + 15], w, h, pxScale);
+        hudCtx.lineWidth = 1.6;
+        hudCtx.strokeStyle = 'rgba(239, 68, 68, 0.85)';
+        hudCtx.beginPath(); hudCtx.moveTo(o2[0], o2[1]); hudCtx.lineTo(axX[0], axX[1]); hudCtx.stroke();
+        hudCtx.strokeStyle = 'rgba(34, 197, 94, 0.85)';
+        hudCtx.beginPath(); hudCtx.moveTo(o2[0], o2[1]); hudCtx.lineTo(axY[0], axY[1]); hudCtx.stroke();
+        hudCtx.strokeStyle = 'rgba(59, 130, 246, 0.85)';
+        hudCtx.beginPath(); hudCtx.moveTo(o2[0], o2[1]); hudCtx.lineTo(axZ[0], axZ[1]); hudCtx.stroke();
+
+        // 3D Bounding Box Calipers
         const corners = [
           [-hx, -hy, -hzBox], [hx, -hy, -hzBox], [hx, hy, -hzBox], [-hx, hy, -hzBox],
           [-hx, -hy, hzBox],  [hx, -hy, hzBox],  [hx, hy, hzBox],  [-hx, hy, hzBox]
@@ -882,7 +1136,6 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
           [4,5],[5,6],[6,7],[7,4],
           [0,4],[1,5],[2,6],[3,7]
         ];
-        hudCtx.save();
         hudCtx.strokeStyle = 'rgba(245, 158, 11, 0.65)';
         hudCtx.setLineDash([4, 4]);
         hudCtx.lineWidth = 1.1;
@@ -923,6 +1176,7 @@ def build_viewer_html(
     subtitle: str = "Real-Time WebGL Model Stream · Camera & Settings Locked",
     max_triangles: int = 35000,
 ) -> str:
+    _start_bridge_if_available()
     payload = build_payload_from_mesh(mesh_filepath, title, subtitle, max_triangles=max_triangles)
     return render_html_from_payload(payload)
 
@@ -936,6 +1190,7 @@ def sync_live_viewer(
     stream_delay_sec: float = 0.0,
     max_triangles: int = 35000,
 ) -> Dict[str, Any]:
+    _start_bridge_if_available()
     out_html_abs = os.path.abspath(output_html)
     os.makedirs(os.path.dirname(out_html_abs), exist_ok=True)
 
@@ -992,6 +1247,7 @@ def init_blueprint_viewer(
     title: str = "Live 3D Parametric CAD Studio",
     subtitle: str = "Initializing Parametric Blueprint...",
 ) -> Dict[str, Any]:
+    _start_bridge_if_available()
     out_html_abs = os.path.abspath(output_html)
     os.makedirs(os.path.dirname(out_html_abs), exist_ok=True)
     payload = build_blueprint_payload(target_dims_mm, title=title, subtitle=subtitle)
@@ -1011,7 +1267,7 @@ def init_blueprint_viewer(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate or live-sync the WebGL 3D CAD Studio Inspector HTML.")
-    parser.add_argument("mesh_file", nargs="?", default=None, help="Path to .stl or .obj file")
+    parser.add_argument("mesh_file", nargs="?", default=None, help="Path to .stl, .3mf, or .obj file")
     parser.add_argument("--init-blueprint", nargs=3, type=float, metavar=("X", "Y", "Z"), default=None)
     parser.add_argument("--title", default="Live 3D Parametric CAD Studio")
     parser.add_argument("--subtitle", default="Real-Time WebGL Model Stream · Camera & Settings Locked")
