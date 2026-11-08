@@ -146,6 +146,18 @@ def build_goodwiners_m10_connector(
     overrides[(13, 1)] = (11.20, -13.50)
     overrides[(13, 5)] = (11.20, -7.35)
 
+    # 5. Rounded outer corners of the adapter plate (smooth R ≈ 3.0mm fillets)
+    overrides[(0, 0)] = (-19.50, -14.20)
+    overrides[(18, 0)] = (19.50, -14.20)
+    overrides[(0, 14)] = (-19.50, 11.80)
+    overrides[(18, 14)] = (19.50, 11.80)
+
+    # 6. Central hub outer corners rounded
+    overrides[(4, 0)] = (-13.80, -15.00)
+    overrides[(14, 0)] = (13.80, -15.00)
+    overrides[(4, 14)] = (-13.80, 12.60)
+    overrides[(14, 14)] = (13.80, 12.60)
+
     def z0_fn(ix: int, iy: int, x: float, y: float) -> float:
         return 0.0  # Flat bottom mating face against Back.stl
 
@@ -254,6 +266,38 @@ def extract_original_back_stl(out_dir: str) -> None:
         pass
 
 
+def build_goodwiners_m10_connector_assembly(
+    p: Dict[str, float] = DEFAULT_PARAMS,
+) -> cad_engine.ManifoldMeshBuilder:
+    """
+    Combines the filleted M10 Connector Adapter with all 4 M2.8 Screws
+    seated in their mounting holes for complete assembly inspection.
+    """
+    import generate_goodwiners_connector_screws
+
+    adapter = build_goodwiners_m10_connector(p)
+    screw = generate_goodwiners_connector_screws.build_connector_screw()
+
+    assembly = cad_engine.ManifoldMeshBuilder()
+    for tri in adapter.triangles:
+        assembly.add_triangle(tri[0], tri[1], tri[2])
+
+    # 4 mounting hole locations matching Back.stl
+    holes = [(-19.00, -10.425), (19.00, -10.425), (-19.00, 10.425), (19.00, 10.425)]
+    for hx, hy in holes:
+        for tri in screw.triangles:
+            # Screw head sits on flange at Z=3.20 mm and extends down through Z=0 into Back.stl
+            # sz=0 (head top) -> z=5.80 mm; sz=2.60 (head base) -> z=3.20 mm; sz=12.75 (tip) -> z=-6.95 mm
+            p1 = (round(hx + tri[0][0], 4), round(hy + tri[0][1], 4), round(5.80 - tri[0][2], 4))
+            p2 = (round(hx + tri[1][0], 4), round(hy + tri[1][1], 4), round(5.80 - tri[1][2], 4))
+            p3 = (round(hx + tri[2][0], 4), round(hy + tri[2][1], 4), round(5.80 - tri[2][2], 4))
+            # Swap p2, p3 to keep outward normals after Z inversion
+            assembly.add_triangle(p1, p3, p2)
+
+    assembly.mark_checkpoint("M10 Connector Adapter + 4× M2.8 Screws Assembly")
+    return assembly
+
+
 def main():
     out_dir = os.path.abspath(
         os.path.join(SCRIPT_DIR, "..", "..", "..", "models", "goodwiners_phone_buds_mount")
@@ -261,8 +305,12 @@ def main():
     os.makedirs(out_dir, exist_ok=True)
 
     b_conn = build_goodwiners_m10_connector(DEFAULT_PARAMS)
+    b_assembly = build_goodwiners_m10_connector_assembly(DEFAULT_PARAMS)
+
     path_conn_stl = os.path.join(out_dir, "goodwiners_m10_connector_adapter.stl")
     path_conn_3mf = os.path.join(out_dir, "goodwiners_m10_connector_adapter.3mf")
+    path_assembly_stl = os.path.join(out_dir, "goodwiners_m10_connector_assembly_with_screws.stl")
+    path_assembly_3mf = os.path.join(out_dir, "goodwiners_m10_connector_assembly_with_screws.3mf")
     path_compact_stl = os.path.join(out_dir, "goodwiners_compact_m10_adapter.stl")
     path_compact_3mf = os.path.join(out_dir, "goodwiners_compact_m10_adapter.3mf")
     path_main_stl = os.path.join(out_dir, "goodwiners_back_plate_m10.stl")
@@ -273,12 +321,17 @@ def main():
     b_conn.export_3mf(path_conn_3mf, part_name="goodwiners_m10_connector_adapter")
     b_conn.export_3mf(path_compact_3mf, part_name="goodwiners_compact_m10_adapter")
 
+    b_assembly.export_binary_stl(path_assembly_stl, "goodwiners_m10_connector_assembly_with_screws")
+    b_assembly.export_3mf(path_assembly_3mf, part_name="goodwiners_m10_connector_assembly_with_screws")
+
     extract_original_back_stl(out_dir)
 
     print(f"Saved: {path_conn_stl} ({len(b_conn.triangles)} tris)")
     print(f"Saved: {path_conn_3mf}")
+    print(f"Saved: {path_assembly_stl} ({len(b_assembly.triangles)} tris)")
+    print(f"Saved: {path_assembly_3mf}")
 
-    # Auto-sync Live CAD Studio in active conversation
+    # Auto-sync Live CAD Studio with complete assembly view
     try:
         import generate_viewer
         base_brain = os.path.expanduser("~/.gemini/jetski/brain")
@@ -294,10 +347,10 @@ def main():
         if target_dir:
             out_html = os.path.join(target_dir, "live_cad_studio.html")
             generate_viewer.sync_live_viewer(
-                mesh_filepath=path_conn_stl,
+                mesh_filepath=path_assembly_stl,
                 output_html=out_html,
-                title="Goodwiners M10 Connector Adapter v2",
-                subtitle="Auto-Synced Live CAD Studio · Filleted Dock Pockets",
+                title="Goodwiners M10 Connector Adapter v2 (with 4 Screws)",
+                subtitle="Rounded Corners & 4× M2.8 Screws Seated in Mounting Holes",
             )
             print(f"Auto-synced Live CAD Studio: {out_html}")
     except Exception as e:
