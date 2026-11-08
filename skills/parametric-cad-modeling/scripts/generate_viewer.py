@@ -1,22 +1,25 @@
 #!/usr/bin/env python3
 """
 3D Model & Parametric CAD Studio — High-Performance WebGL + Live Hot-Swap 3D Studio Inspector
+Cloud & Mobile Ready (`antigravity.google.com` + Local Desktop IDE)
+
 Features:
 1. Hardware-Accelerated WebGL 3D Viewport (60-144+ FPS on 50,000+ triangles):
    - Single-draw-call GPU VBO pipeline (`gl.drawArrays`) with 24-bit hardware depth buffer,
-     per-pixel Blinn-Phong studio lighting, barycentric CAD edge shading, real-time GPU
-     `discard` Z-section slicing, and instant shader switching (Clean Surface, CAD Wire,
-     DFM Overhang, Wireframe, X-Ray Internal).
+     `preserveDrawingBuffer: true` for mobile/remote browsers, per-pixel Blinn-Phong studio
+     lighting, barycentric CAD edge shading, real-time GPU `discard` Z-section slicing, and
+     instant shader switching (Clean Surface, CAD Wire, DFM Overhang, Wireframe, X-Ray Internal).
    - Automatic pre-allocated & backface-culled Canvas2D fallback if WebGL is unavailable.
-2. In-Plugin Export (.STL, .3MF, .OBJ) & Direct "Open in Bambu Studio" Integration:
-   - One-click export to `~/Downloads/` + browser download for `.stl`, `.3mf`, and `.obj`.
-   - One-click "Open in Bambu Studio" button powered by `scripts/studio_bridge_server.py`.
-3. 3D Build-Plate Grid (10mm grid + XYZ Axis Triad), Bore/Thread Metrology Readout & Turntable Spin:
-   - Visualizes build plate orientation, caliper bounding box, and detected ISO threads/bores.
-4. Real-Time Model-Only Hot-Swap Polling (via sibling `live_model_data.js`):
-   - Updates ONLY the 3D mesh VBOs, build stage progress, and engineering HUD metrics in place.
-   - Camera angles (`yaw`, `pitch`, `zoom`, `panX`, `panY`) and inspector settings are locked
-     in `window.name` + `localStorage` and paused during active mouse dragging for zero stutter.
+2. 100% Self-Contained Cloud & Mobile Support (`antigravity.google.com`):
+   - Strictly adheres to `antigravity.google.com` iframe CSP (zero external requests or relative
+     script polling when hosted on `https:` / `srcdoc` / `blob:`).
+   - Inline fallback dimensions on `#viewport-wrap`, `#gl-canvas`, and `#hud-canvas` plus multi-stage
+     post-load resize triggers so the 3D viewport never collapses while Tailwind JIT loads.
+   - Full mobile touchscreen support (1-finger orbit + 2-finger pinch-zoom & pan).
+3. In-Plugin Export (.STL, .3MF, .OBJ) & Direct "Open in Bambu Studio" Integration:
+   - Pure client-side binary `.STL`, `.3MF` (self-contained ZIP/3MF), and `.OBJ` downloaders work
+     anywhere (including remotely on `antigravity.google.com`), plus local `~/Downloads/` & Bambu
+     Studio Flatpak bridge when running locally.
 """
 
 import argparse
@@ -53,7 +56,7 @@ def _start_bridge_if_available() -> None:
 def build_payload_from_mesh(
     mesh_filepath: str,
     title: str = "Live 3D Parametric CAD Studio",
-    subtitle: str = "Real-Time WebGL Model Stream · Camera & Settings Locked",
+    subtitle: str = "Real-Time WebGL Model Stream · Cloud & Mobile Ready",
     checkpoints: Optional[List[Dict[str, Any]]] = None,
     active_stage_label: str = "Final Verified Manifold Solid",
     stage_progress_pct: int = 100,
@@ -72,13 +75,18 @@ def build_payload_from_mesh(
     step = max(1, len(triangles) // max_triangles)
     sampled = triangles[::step]
 
-    flat_coords: List[float] = []
+    verts_list: List[float] = []
+    vert_map: Dict[Tuple[float, float, float], int] = {}
+    faces_list: List[int] = []
     for a, b, c in sampled:
-        flat_coords.extend([
-            round(a[0], 3), round(a[1], 3), round(a[2], 3),
-            round(b[0], 3), round(b[1], 3), round(b[2], 3),
-            round(c[0], 3), round(c[1], 3), round(c[2], 3),
-        ])
+        for pt in (a, b, c):
+            key = (round(pt[0], 2), round(pt[1], 2), round(pt[2], 2))
+            idx = vert_map.get(key)
+            if idx is None:
+                idx = len(vert_map)
+                vert_map[key] = idx
+                verts_list.extend(key)
+            faces_list.append(idx)
 
     dims = audit.get("dimensions_mm", {})
     phys = audit.get("physical_properties", {})
@@ -121,7 +129,8 @@ def build_payload_from_mesh(
             "stage_progress_pct": stage_progress_pct,
             "checkpoints": scaled_checkpoints,
         },
-        "coords": flat_coords,
+        "verts": verts_list,
+        "faces": faces_list,
     }
 
 
@@ -187,6 +196,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
 <html>
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
 </head>
 <body class="bg-transparent text-[var(--foreground)] antialiased p-2 select-none">
@@ -198,7 +208,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
           <h2 id="model-title" class="text-[var(--foreground)] font-semibold text-sm truncate"></h2>
           <span id="live-pill" class="text-xs px-2 py-0.5 rounded-full font-medium bg-sky-500/20 text-sky-400 border border-sky-500/30 flex items-center gap-1 shrink-0">
             <span id="live-dot" class="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse"></span>
-            <span id="live-status-text">WEBGL LIVE</span>
+            <span id="live-status-text">WEBGL 3D</span>
           </span>
           <span id="manifold-badge" class="text-xs px-2 py-0.5 rounded-full font-medium shrink-0"></span>
         </div>
@@ -232,24 +242,24 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
 
     <!-- Main Interactive 3D Viewport + Side Controls -->
     <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-stretch">
-      <div id="viewport-wrap" class="sm:col-span-8 lg:col-span-9 relative bg-[var(--background)] border border-[var(--border)] rounded-lg overflow-hidden" style="height: 295px;">
-        <canvas id="gl-canvas" class="w-full h-full cursor-grab active:cursor-grabbing block"></canvas>
-        <canvas id="hud-canvas" class="w-full h-full pointer-events-none absolute inset-0 block"></canvas>
+      <div id="viewport-wrap" class="sm:col-span-8 lg:col-span-9 relative bg-[var(--background)] border border-[var(--border)] rounded-lg overflow-hidden" style="position: relative; height: 285px; width: 100%; overflow: hidden;">
+        <canvas id="gl-canvas" class="w-full h-full cursor-grab active:cursor-grabbing block" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; touch-action: none;"></canvas>
+        <canvas id="hud-canvas" class="w-full h-full pointer-events-none absolute inset-0 block" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block; pointer-events: none;"></canvas>
         <!-- Overlay HUD -->
-        <div class="absolute top-2 left-2 flex flex-wrap gap-1.5 pointer-events-none">
+        <div class="absolute top-2 left-2 flex flex-wrap gap-1.5 pointer-events-none" style="position: absolute; top: 8px; left: 8px; pointer-events: none;">
           <span class="bg-[var(--card)]/90 border border-[var(--border)] text-[var(--foreground)] text-xs px-2 py-0.5 rounded font-mono" id="hud-triangles"></span>
           <span class="bg-[var(--card)]/90 border border-[var(--border)] text-[var(--foreground)] text-xs px-2 py-0.5 rounded font-mono" id="hud-overhang"></span>
           <span class="bg-[var(--card)]/90 border border-[var(--border)] text-sky-400 text-xs px-2 py-0.5 rounded font-mono hidden" id="hud-bores"></span>
           <span class="bg-[var(--card)]/90 border border-[var(--border)] text-emerald-400 text-xs px-2 py-0.5 rounded font-mono" id="hud-fps">GPU WebGL</span>
         </div>
-        <div class="absolute top-2 right-2 flex gap-1">
+        <div class="absolute top-2 right-2 flex gap-1" style="position: absolute; top: 8px; right: 8px;">
           <button id="spin-btn" onclick="toggleAutoSpin()" class="bg-[var(--card)]/90 hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-xs px-2 py-0.5 rounded font-medium transition shadow-sm" title="Toggle Turntable Auto-Spin">⟳ Spin</button>
           <button onclick="fitCameraToModel()" class="bg-[var(--card)]/90 hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] text-xs px-2 py-0.5 rounded font-medium transition shadow-sm" title="Reset & Fit Model to Viewport">⟲ Fit View</button>
         </div>
         <!-- Toast Banner for Export / Bambu Studio Actions -->
         <div id="action-toast" class="hidden absolute bottom-7 left-2.5 right-2.5 bg-[var(--card)]/95 border border-emerald-500/40 text-emerald-400 text-xs px-2.5 py-1 rounded-md font-medium shadow-md pointer-events-none truncate"></div>
-        <div class="absolute bottom-1.5 left-2.5 text-xs text-[var(--muted-foreground)] pointer-events-none">
-          Left-drag: Orbit · Shift/Right-drag: Pan · Scroll: Zoom
+        <div class="absolute bottom-1.5 left-2.5 text-xs text-[var(--muted-foreground)] pointer-events-none" style="position: absolute; bottom: 6px; left: 10px; pointer-events: none;">
+          Drag / 1-Finger: Orbit · Shift-Drag / 2-Finger: Pan &amp; Pinch Zoom
         </div>
       </div>
 
@@ -285,7 +295,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
           <div class="flex items-center justify-between mt-1.5 pt-1.5 border-t border-[var(--border)]">
             <label class="flex items-center gap-1.5 cursor-pointer">
               <input type="checkbox" id="show-calipers" checked onchange="onCaliperToggle(this.checked)" class="accent-[var(--primary)]">
-              <span>3D Grid & Calipers</span>
+              <span>3D Grid &amp; Calipers</span>
             </label>
           </div>
         </div>
@@ -295,13 +305,13 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
     <!-- Bottom Export & Slicer Integration Bar -->
     <div class="bg-[var(--background)] border border-[var(--border)] rounded-lg px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2 text-xs">
       <div class="flex items-center gap-1.5 flex-wrap">
-        <span class="font-semibold text-[var(--muted-foreground)] mr-0.5">Export Model:</span>
-        <button onclick="exportModelFormat('stl')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] rounded px-2.5 py-1 font-medium transition flex items-center gap-1 shadow-sm" title="Export Binary STL to ~/Downloads & Browser">⬇ .STL</button>
-        <button onclick="exportModelFormat('3mf')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] rounded px-2.5 py-1 font-medium transition flex items-center gap-1 shadow-sm" title="Export Native 3MF to ~/Downloads">⬇ .3MF</button>
-        <button onclick="exportModelFormat('obj')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] rounded px-2.5 py-1 font-medium transition flex items-center gap-1 shadow-sm" title="Export Wavefront OBJ to ~/Downloads & Browser">⬇ .OBJ</button>
+        <span class="font-semibold text-[var(--muted-foreground)] mr-0.5">Export:</span>
+        <button onclick="exportModelFormat('stl')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] rounded px-2.5 py-1 font-medium transition flex items-center gap-1 shadow-sm" title="Download Binary STL">⬇ .STL</button>
+        <button onclick="exportModelFormat('3mf')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] rounded px-2.5 py-1 font-medium transition flex items-center gap-1 shadow-sm" title="Download 3MF Package">⬇ .3MF</button>
+        <button onclick="exportModelFormat('obj')" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] text-[var(--foreground)] rounded px-2.5 py-1 font-medium transition flex items-center gap-1 shadow-sm" title="Download Wavefront OBJ">⬇ .OBJ</button>
       </div>
       <div class="flex items-center gap-2">
-        <button id="bambu-btn" onclick="openInBambuStudio()" class="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/40 rounded-md px-3 py-1 font-semibold transition flex items-center gap-1.5 shadow-sm" title="Launch Bambu Studio directly with this 3D model">
+        <button id="bambu-btn" onclick="openInBambuStudio()" class="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/40 rounded-md px-3 py-1 font-semibold transition flex items-center gap-1.5 shadow-sm" title="Launch Bambu Studio with this 3D model">
           <span>🚀 Open in Bambu Studio</span>
         </button>
       </div>
@@ -310,10 +320,11 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
 
   <script>
     // =========================================================================
-    // 1. Camera & Settings Persistence Lock
+    // 1. Environment Detection & Safe Camera State Persistence
     // =========================================================================
     const STATE_KEY = 'agy_cad_studio_locked_view_v2';
     const BRIDGE_URL = 'http://127.0.0.1:19847';
+    const IS_LOCAL_ENV = (window.location.protocol === 'file:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
     let yaw = -0.65, pitch = 0.55, zoom = 1.0, panX = 0, panY = 0;
     let renderMode = 'clean';
     let slicePct = 100;
@@ -327,8 +338,10 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
         if (window.name && window.name.startsWith('AGY_CAD_VIEW:')) {{
           raw = window.name.slice('AGY_CAD_VIEW:'.length);
         }}
-        if (!raw && window.localStorage) {{
-          raw = localStorage.getItem(STATE_KEY);
+        if (!raw) {{
+          try {{
+            raw = window.localStorage.getItem(STATE_KEY);
+          }} catch (lsErr) {{}}
         }}
         if (raw) {{
           const st = JSON.parse(raw);
@@ -347,7 +360,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
     function saveLockedViewState() {{
       const st = JSON.stringify({{ yaw, pitch, zoom, panX, panY, renderMode, slicePct, showCalipers }});
       try {{ window.name = 'AGY_CAD_VIEW:' + st; }} catch (e) {{}}
-      try {{ if (window.localStorage) localStorage.setItem(STATE_KEY, st); }} catch (e) {{}}
+      try {{ window.localStorage.setItem(STATE_KEY, st); }} catch (e) {{}}
     }}
 
     loadLockedViewState();
@@ -366,8 +379,8 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
 
     function initWebGL() {{
       try {{
-        gl = glCanvas.getContext('webgl', {{ antialias: true, alpha: true, depth: true }}) ||
-             glCanvas.getContext('experimental-webgl', {{ antialias: true, alpha: true, depth: true }});
+        const ctxAttrs = {{ antialias: true, alpha: true, depth: true, preserveDrawingBuffer: true }};
+        gl = glCanvas.getContext('webgl', ctxAttrs) || glCanvas.getContext('experimental-webgl', ctxAttrs);
         if (!gl) return false;
         gl.getExtension('OES_standard_derivatives');
 
@@ -424,18 +437,15 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
             vec3 n = normalize(vNorm);
             vec3 vn = normalize(vViewNorm);
 
-            // Edge factor from barycentric coordinates
             float minB = min(min(vBary.x, vBary.y), vBary.z);
             float edge = smoothstep(0.0, 0.035, minB);
 
             if (uMode == 2) {{
-              // Wireframe mode
               if (minB > 0.055) discard;
               gl_FragColor = vec4(0.22, 0.74, 0.97, 0.92);
               return;
             }}
 
-            // Studio 3-point lighting + view specular
             float keyLight = max(0.0, dot(n, normalize(vec3(0.42, -0.48, 0.77))));
             float fillLight = max(0.0, dot(n, normalize(vec3(-0.55, 0.40, 0.35)))) * 0.35;
             float rimLight = pow(1.0 - abs(vn.z), 2.2) * 0.28;
@@ -443,7 +453,6 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
             float shade = clamp(0.30 + 0.58 * keyLight + fillLight + rimLight, 0.20, 1.05);
 
             if (uMode == 3) {{
-              // X-Ray Internal mode
               vec3 xcol = vec3(0.22, 0.74, 0.97) * (0.55 + rimLight * 1.8);
               float alpha = mix(0.48, 0.16 + rimLight * 0.35, edge);
               gl_FragColor = vec4(xcol, alpha);
@@ -452,17 +461,14 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
 
             vec3 baseCol;
             if (uMode == 1) {{
-              // DFM Overhang mode (>45 deg from vertical)
               bool isOverhang = (n.z < -0.708 && vModelZ > uZMin + 0.25);
               baseCol = isOverhang ? vec3(0.94, 0.27, 0.27) : vec3(0.13, 0.77, 0.37);
             }} else {{
-              // Clean Surface or CAD Solid mode (anodized engineering steel-blue)
               baseCol = vec3(0.16, 0.44, 0.68) + vec3(0.36, 0.46, 0.32) * (shade - 0.25);
             }}
 
             vec3 finalCol = baseCol * shade + vec3(spec);
             if (uMode != 4) {{
-              // Draw barycentric triangle edge lines only when NOT in Clean Surface mode
               finalCol = mix(finalCol * 0.62, finalCol, edge);
             }}
             gl_FragColor = vec4(finalCol, 1.0);
@@ -524,7 +530,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
     }}
 
     // =========================================================================
-    // 3. Live Model Data State, GPU VBO Upload & Export / Slicer Actions
+    // 3. Live Model Data State, GPU VBO Upload & Cloud/Local Export Actions
     // =========================================================================
     let currentRevision = 0;
     let META = {{}};
@@ -534,7 +540,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
     let replayTimer = null;
     let bboxRadius = 100;
     let centerZOffset = 0;
-    let swTris = []; // Only populated if WebGL is unavailable
+    let swTris = [];
     let rafPending = false;
     let toastTimer = null;
 
@@ -561,7 +567,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
         setTimeout(() => {{
           a.remove();
           URL.revokeObjectURL(url);
-        }}, 500);
+        }}, 600);
       }} catch (e) {{}}
     }}
 
@@ -616,57 +622,123 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       return new Blob([lines.join('\\n')], {{ type: 'text/plain' }});
     }}
 
+    // Pure-JS Uncompressed ZIP Builder for Self-Contained .3MF Download on Cloud/Mobile
+    function buildClient3MF() {{
+      const numTris = Math.floor(RAW_COORDS.length / 9);
+      const vLines = [], tLines = [];
+      for (let t = 0; t < numTris; t++) {{
+        const b = t * 9;
+        vLines.push(`<vertex x="${{RAW_COORDS[b]}}" y="${{RAW_COORDS[b+1]}}" z="${{RAW_COORDS[b+2]}}"/>`);
+        vLines.push(`<vertex x="${{RAW_COORDS[b+3]}}" y="${{RAW_COORDS[b+4]}}" z="${{RAW_COORDS[b+5]}}"/>`);
+        vLines.push(`<vertex x="${{RAW_COORDS[b+6]}}" y="${{RAW_COORDS[b+7]}}" z="${{RAW_COORDS[b+8]}}"/>`);
+        const i0 = t * 3;
+        tLines.push(`<triangle v1="${{i0}}" v2="${{i0+1}}" v3="${{i0+2}}"/>`);
+      }}
+      const contentTypes = `<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>`;
+      const rels = `<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>`;
+      const modelXml = `<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources><object id="1" type="model"><mesh><vertices>${{vLines.join('')}}</vertices><triangles>${{tLines.join('')}}</triangles></mesh></object></resources><build><item objectid="1"/></build></model>`;
+
+      const enc = new TextEncoder();
+      const files = [
+        {{ name: '[Content_Types].xml', data: enc.encode(contentTypes) }},
+        {{ name: '_rels/.rels', data: enc.encode(rels) }},
+        {{ name: '3D/3dmodel.model', data: enc.encode(modelXml) }}
+      ];
+
+      function crc32(bytes) {{
+        let c = -1;
+        for (let i = 0; i < bytes.length; i++) {{
+          c ^= bytes[i];
+          for (let k = 0; k < 8; k++) c = (c >>> 1) ^ (0xEDB88320 & -(c & 1));
+        }}
+        return (c ^ -1) >>> 0;
+      }}
+
+      const localParts = [], centralParts = [];
+      let offset = 0;
+      for (const f of files) {{
+        const nameBytes = enc.encode(f.name);
+        const crc = crc32(f.data);
+        const sz = f.data.length;
+        const lh = new Uint8Array(30 + nameBytes.length);
+        const ldv = new DataView(lh.buffer);
+        ldv.setUint32(0, 0x04034b50, true);
+        ldv.setUint16(4, 20, true);
+        ldv.setUint32(14, crc, true);
+        ldv.setUint32(18, sz, true);
+        ldv.setUint32(22, sz, true);
+        ldv.setUint16(26, nameBytes.length, true);
+        lh.set(nameBytes, 30);
+        localParts.push(lh, f.data);
+
+        const ch = new Uint8Array(46 + nameBytes.length);
+        const cdv = new DataView(ch.buffer);
+        cdv.setUint32(0, 0x02014b50, true);
+        cdv.setUint16(4, 20, true);
+        cdv.setUint16(6, 20, true);
+        cdv.setUint32(16, crc, true);
+        cdv.setUint32(20, sz, true);
+        cdv.setUint32(24, sz, true);
+        cdv.setUint16(28, nameBytes.length, true);
+        cdv.setUint32(42, offset, true);
+        ch.set(nameBytes, 46);
+        centralParts.push(ch);
+        offset += lh.length + sz;
+      }}
+      let cdSize = 0;
+      for (const cp of centralParts) cdSize += cp.length;
+      const eocd = new Uint8Array(22);
+      const edv = new DataView(eocd.buffer);
+      edv.setUint32(0, 0x06054b50, true);
+      edv.setUint16(8, files.length, true);
+      edv.setUint16(10, files.length, true);
+      edv.setUint32(12, cdSize, true);
+      edv.setUint32(16, offset, true);
+      return new Blob([...localParts, ...centralParts, eocd], {{ type: 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml' }});
+    }}
+
     async function exportModelFormat(fmt) {{
       const stem = (META.filename || 'cad_model.stl').replace(/\\.(stl|3mf|obj)$/i, '');
       const outName = `${{stem}}.${{fmt}}`;
-      // 1. Trigger local bridge export to ~/Downloads/<stem>.<fmt>
-      if (META.filepath) {{
+      if (IS_LOCAL_ENV && META.filepath) {{
         try {{
           const res = await fetch(`${{BRIDGE_URL}}/export?file=${{encodeURIComponent(META.filepath)}}&format=${{encodeURIComponent(fmt)}}`);
           const data = await res.json();
           if (data && data.status === 'ok') {{
             showToast(`✓ ${{data.message}}`);
             if (fmt === 'stl') triggerBrowserBlobDownload(buildClientBinarySTL(), outName);
+            else if (fmt === '3mf') triggerBrowserBlobDownload(buildClient3MF(), outName);
             else if (fmt === 'obj') triggerBrowserBlobDownload(buildClientOBJ(), outName);
             return;
           }}
         }} catch (err) {{}}
       }}
-      // 2. Fallback: direct client-side Blob download
-      if (fmt === 'stl' && RAW_COORDS.length > 0) {{
-        triggerBrowserBlobDownload(buildClientBinarySTL(), outName);
-        showToast(`✓ Downloaded ${{outName}}`);
-      }} else if (fmt === 'obj' && RAW_COORDS.length > 0) {{
-        triggerBrowserBlobDownload(buildClientOBJ(), outName);
+      if (RAW_COORDS.length > 0) {{
+        if (fmt === 'stl') triggerBrowserBlobDownload(buildClientBinarySTL(), outName);
+        else if (fmt === '3mf') triggerBrowserBlobDownload(buildClient3MF(), outName);
+        else if (fmt === 'obj') triggerBrowserBlobDownload(buildClientOBJ(), outName);
         showToast(`✓ Downloaded ${{outName}}`);
       }} else {{
-        showToast(`✓ Ready in workspace: ${{outName}}`);
+        showToast(`✓ Ready: ${{outName}}`);
       }}
     }}
 
     async function openInBambuStudio() {{
-      if (!META.filepath) {{
-        showToast('⚠ Model file path not initialized yet', true);
-        return;
-      }}
-      showToast(`🚀 Launching Bambu Studio with ${{META.filename}}...`);
-      try {{
-        const res = await fetch(`${{BRIDGE_URL}}/open-bambu?file=${{encodeURIComponent(META.filepath)}}`);
-        const data = await res.json();
-        if (data && data.status === 'ok') {{
-          showToast(`✓ ${{data.message}}`);
-          return;
-        }} else if (data && data.message) {{
-          showToast(`⚠ ${{data.message}}`, true);
-          return;
-        }}
-      }} catch (err) {{
-        // Fallback to custom URI protocol handler if registered
+      if (IS_LOCAL_ENV && META.filepath) {{
+        showToast(`🚀 Launching Bambu Studio with ${{META.filename}}...`);
         try {{
-          window.open(`bambustudio://open?file=${{encodeURIComponent(META.filepath)}}`, '_blank');
-        }} catch (e) {{}}
-        showToast(`✓ Sent ${{META.filename}} to Bambu Studio launcher`);
+          const res = await fetch(`${{BRIDGE_URL}}/open-bambu?file=${{encodeURIComponent(META.filepath)}}`);
+          const data = await res.json();
+          if (data && data.status === 'ok') {{
+            showToast(`✓ ${{data.message}}`);
+            return;
+          }}
+        }} catch (err) {{}}
       }}
+      // On remote/cloud sessions (antigravity.google.com), download the .3MF directly so the user can open it
+      const stem = (META.filename || 'cad_model.stl').replace(/\\.(stl|3mf|obj)$/i, '');
+      triggerBrowserBlobDownload(buildClient3MF(), `${{stem}}.3mf`);
+      showToast(`✓ Downloaded ${{stem}}.3mf for Bambu Studio`);
     }}
 
     function toggleAutoSpin() {{
@@ -707,7 +779,18 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       if (payload.revision && payload.revision === currentRevision && totalTriCount > 0) return;
       currentRevision = payload.revision || Date.now();
       META = payload.meta;
-      const RAW = payload.coords || [];
+      let RAW = payload.coords || [];
+      if ((!RAW || RAW.length === 0) && payload.verts && payload.faces) {{
+        const V = payload.verts, F = payload.faces;
+        RAW = new Float32Array(F.length * 3);
+        for (let i = 0; i < F.length; i++) {{
+          const vi = F[i] * 3;
+          const oi = i * 3;
+          RAW[oi]     = V[vi];
+          RAW[oi + 1] = V[vi + 1];
+          RAW[oi + 2] = V[vi + 2];
+        }}
+      }}
       RAW_COORDS = RAW;
 
       document.getElementById('model-title').textContent = META.title + (META.filename ? ' (' + META.filename + ')' : '');
@@ -813,7 +896,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
 
       const liveText = document.getElementById('live-status-text');
       if (liveText) {{
-        liveText.textContent = stagePct < 100 ? 'BUILDING LIVE...' : 'WEBGL LIVE';
+        liveText.textContent = stagePct < 100 ? 'BUILDING...' : 'WEBGL 3D';
       }}
 
       requestRender();
@@ -827,10 +910,10 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       const cps = (META && META.checkpoints && META.checkpoints.length > 1)
         ? META.checkpoints
         : [
-            {{ label: 'Stage 1: Base Contour & 45° Chamfer', triangle_count: Math.max(1, Math.floor(totalTriCount * 0.25)) }},
-            {{ label: 'Stage 2: Structural Outer Walls', triangle_count: Math.max(1, Math.floor(totalTriCount * 0.55)) }},
-            {{ label: 'Stage 3: Internal Features & Bosses', triangle_count: Math.max(1, Math.floor(totalTriCount * 0.82)) }},
-            {{ label: 'Stage 4: Final Watertight Manifold Cap', triangle_count: totalTriCount }}
+            {{ label: 'Stage 1: Base Contour & Mounting Flanges', triangle_count: Math.max(1, Math.floor(totalTriCount * 0.25)) }},
+            {{ label: 'Stage 2: Central Hub & Thread Core', triangle_count: Math.max(1, Math.floor(totalTriCount * 0.55)) }},
+            {{ label: 'Stage 3: Top-Recessed Locker Dock', triangle_count: Math.max(1, Math.floor(totalTriCount * 0.82)) }},
+            {{ label: 'Stage 4: Final Watertight Manifold Solid', triangle_count: totalTriCount }}
           ];
       let idx = 0;
       const applyStage = () => {{
@@ -841,7 +924,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
         document.getElementById('stage-pct').textContent = pct + '%';
         document.getElementById('stage-bar').style.width = pct + '%';
         document.getElementById('hud-triangles').textContent = `${{activeTriCount}} / ${{totalTriCount}} tris · Score: ${{META.score}}/100`;
-        document.getElementById('live-status-text').textContent = pct < 100 ? 'BUILDING LIVE...' : 'WEBGL LIVE';
+        document.getElementById('live-status-text').textContent = pct < 100 ? 'BUILDING...' : 'WEBGL 3D';
         requestRender();
         idx++;
         if (idx >= cps.length) {{
@@ -861,30 +944,36 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
     document.getElementById('show-calipers').checked = showCalipers;
 
     // =========================================================================
-    // 4. Viewport ResizeObserver & Mouse/Touch Controls
+    // 4. Viewport ResizeObserver & Desktop Mouse + Mobile Touch Controls
     // =========================================================================
     const viewportWrap = document.getElementById('viewport-wrap');
-    let isDragging = false, lastX = 0, lastY = 0, panMode = false;
+    let isDragging = false, lastX = 0, lastY = 0, panMode = false, lastPinchDist = 0;
 
     function resizeCanvas() {{
       const rect = viewportWrap.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
+      const cssW = Math.max(rect.width || viewportWrap.clientWidth || 480, 200);
+      const cssH = Math.max(rect.height || viewportWrap.clientHeight || 285, 200);
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      glCanvas.width = Math.round(rect.width * dpr);
-      glCanvas.height = Math.round(rect.height * dpr);
-      hudCanvas.width = Math.round(rect.width * dpr);
-      hudCanvas.height = Math.round(rect.height * dpr);
+      glCanvas.width = Math.round(cssW * dpr);
+      glCanvas.height = Math.round(cssH * dpr);
+      hudCanvas.width = Math.round(cssW * dpr);
+      hudCanvas.height = Math.round(cssH * dpr);
       hudCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
       if (hasWebGL && gl) {{
         gl.viewport(0, 0, glCanvas.width, glCanvas.height);
       }}
-      requestRender();
+      renderNow();
     }}
 
     if (typeof ResizeObserver !== 'undefined') {{
       new ResizeObserver(resizeCanvas).observe(viewportWrap);
     }}
     window.addEventListener('resize', resizeCanvas);
+    window.addEventListener('load', () => {{
+      resizeCanvas();
+      setTimeout(resizeCanvas, 80);
+      setTimeout(resizeCanvas, 300);
+    }});
 
     glCanvas.addEventListener('contextmenu', (e) => e.preventDefault());
     glCanvas.addEventListener('mousedown', (e) => {{
@@ -915,25 +1004,52 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       requestRender();
     }}, {{ passive: false }});
 
+    // Mobile Touch: 1-finger Orbit, 2-finger Pinch-Zoom & Pan
     glCanvas.addEventListener('touchstart', (e) => {{
+      e.preventDefault();
+      isDragging = true;
       if (e.touches.length === 1) {{
-        isDragging = true;
         lastX = e.touches[0].clientX;
         lastY = e.touches[0].clientY;
+      }} else if (e.touches.length === 2) {{
+        lastX = 0.5 * (e.touches[0].clientX + e.touches[1].clientX);
+        lastY = 0.5 * (e.touches[0].clientY + e.touches[1].clientY);
+        lastPinchDist = Math.hypot(
+          e.touches[1].clientX - e.touches[0].clientX,
+          e.touches[1].clientY - e.touches[0].clientY
+        );
       }}
-    }}, {{ passive: true }});
-    window.addEventListener('touchend', () => {{ isDragging = false; }});
+    }}, {{ passive: false }});
+    window.addEventListener('touchend', () => {{ isDragging = false; lastPinchDist = 0; }});
     glCanvas.addEventListener('touchmove', (e) => {{
-      if (!isDragging || e.touches.length !== 1) return;
-      const dx = e.touches[0].clientX - lastX;
-      const dy = e.touches[0].clientY - lastY;
-      lastX = e.touches[0].clientX;
-      lastY = e.touches[0].clientY;
-      yaw -= dx * 0.012;
-      pitch = Math.max(-1.55, Math.min(1.55, pitch + dy * 0.012));
+      if (!isDragging) return;
+      e.preventDefault();
+      if (e.touches.length === 1) {{
+        const dx = e.touches[0].clientX - lastX;
+        const dy = e.touches[0].clientY - lastY;
+        lastX = e.touches[0].clientX;
+        lastY = e.touches[0].clientY;
+        yaw -= dx * 0.012;
+        pitch = Math.max(-1.55, Math.min(1.55, pitch + dy * 0.012));
+      }} else if (e.touches.length === 2) {{
+        const mx = 0.5 * (e.touches[0].clientX + e.touches[1].clientX);
+        const my = 0.5 * (e.touches[0].clientY + e.touches[1].clientY);
+        panX += (mx - lastX);
+        panY += (my - lastY);
+        lastX = mx;
+        lastY = my;
+        const dist = Math.hypot(
+          e.touches[1].clientX - e.touches[0].clientX,
+          e.touches[1].clientY - e.touches[0].clientY
+        );
+        if (lastPinchDist > 5 && dist > 5) {{
+          zoom = Math.max(0.30, Math.min(5.0, zoom * (dist / lastPinchDist)));
+        }}
+        lastPinchDist = dist;
+      }}
       saveLockedViewState();
       requestRender();
-    }}, {{ passive: true }});
+    }}, {{ passive: false }});
 
     function fitCameraToModel() {{
       yaw = -0.65;
@@ -1149,20 +1265,23 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       }}
     }}
 
-    // Initialize with embedded payload and start live hot-swap poller
+    // Initialize with embedded payload immediately
     updateModeButtons();
-    resizeCanvas();
     applyModelPayload({payload_json});
+    resizeCanvas();
 
-    // Poll sibling live_model_data.js every 650ms when not actively dragging
-    setInterval(() => {{
-      if (isDragging) return;
-      const s = document.createElement('script');
-      s.src = './live_model_data.js?t=' + Date.now();
-      s.onload = () => s.remove();
-      s.onerror = () => s.remove();
-      document.head.appendChild(s);
-    }}, 650);
+    // Only poll sibling live_model_data.js when running locally on file:// protocol
+    // (avoids CSP violations on antigravity.google.com remote/mobile sessions)
+    if (window.location.protocol === 'file:') {{
+      setInterval(() => {{
+        if (isDragging) return;
+        const s = document.createElement('script');
+        s.src = './live_model_data.js?t=' + Date.now();
+        s.onload = () => s.remove();
+        s.onerror = () => s.remove();
+        document.head.appendChild(s);
+      }}, 650);
+    }}
   </script>
 </body>
 </html>
@@ -1173,7 +1292,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
 def build_viewer_html(
     mesh_filepath: str,
     title: str = "Live 3D Parametric CAD Studio",
-    subtitle: str = "Real-Time WebGL Model Stream · Camera & Settings Locked",
+    subtitle: str = "Real-Time WebGL Model Stream · Cloud & Mobile Ready",
     max_triangles: int = 35000,
 ) -> str:
     _start_bridge_if_available()
@@ -1185,7 +1304,7 @@ def sync_live_viewer(
     mesh_filepath: str,
     output_html: str,
     title: str = "Live 3D Parametric CAD Studio",
-    subtitle: str = "Real-Time WebGL Model Stream · Camera & Settings Locked",
+    subtitle: str = "Real-Time WebGL Model Stream · Cloud & Mobile Ready",
     checkpoints: Optional[List[Dict[str, Any]]] = None,
     stream_delay_sec: float = 0.0,
     max_triangles: int = 35000,
@@ -1194,7 +1313,6 @@ def sync_live_viewer(
     out_html_abs = os.path.abspath(output_html)
     os.makedirs(os.path.dirname(out_html_abs), exist_ok=True)
 
-    # Stream intermediate construction checkpoints into live_model_data.js
     if checkpoints and len(checkpoints) > 1 and stream_delay_sec > 0:
         for idx, cp in enumerate(checkpoints[:-1]):
             pct = int(round(100.0 * (idx + 1) / len(checkpoints)))
@@ -1215,7 +1333,6 @@ def sync_live_viewer(
                     f.write(html_str)
             time.sleep(stream_delay_sec)
 
-    # Final 100% verified model payload
     final_payload = build_payload_from_mesh(
         mesh_filepath=mesh_filepath,
         title=title,
@@ -1270,7 +1387,7 @@ def main() -> None:
     parser.add_argument("mesh_file", nargs="?", default=None, help="Path to .stl, .3mf, or .obj file")
     parser.add_argument("--init-blueprint", nargs=3, type=float, metavar=("X", "Y", "Z"), default=None)
     parser.add_argument("--title", default="Live 3D Parametric CAD Studio")
-    parser.add_argument("--subtitle", default="Real-Time WebGL Model Stream · Camera & Settings Locked")
+    parser.add_argument("--subtitle", default="Real-Time WebGL Model Stream · Cloud & Mobile Ready")
     parser.add_argument("--out-html", required=True, help="Output HTML file path")
     parser.add_argument("--max-tris", type=int, default=35000)
     args = parser.parse_args()
