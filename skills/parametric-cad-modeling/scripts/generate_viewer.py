@@ -236,7 +236,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       </div>
       <div class="flex items-center gap-1.5 shrink-0 text-xs">
         <span id="stage-pct" class="font-mono text-[var(--muted-foreground)]">100%</span>
-        <button id="replay-btn" onclick="replayBuildStages()" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] rounded px-2 py-0.5 text-xs font-medium transition">▶ Replay</button>
+        <button id="replay-btn" onclick="replayPrintTimelapse()" class="bg-[var(--card)] hover:bg-[var(--secondary)] border border-[var(--border)] rounded px-2.5 py-0.5 text-xs font-medium transition flex items-center gap-1 shadow-sm" title="Simulate 3D printing timelapse from Z=0 to max Z">▶ Print Timelapse</button>
       </div>
     </div>
 
@@ -470,6 +470,11 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
             vec3 finalCol = baseCol * shade + vec3(spec);
             if (uMode != 4) {{
               finalCol = mix(finalCol * 0.62, finalCol, edge);
+            }}
+            float distToCut = uZMaxAllowed - vModelZ;
+            if (distToCut >= 0.0 && distToCut < 0.38 && uZMaxAllowed < 9999.0) {{
+              float bead = 1.0 - (distToCut / 0.38);
+              finalCol = mix(finalCol, vec3(1.0, 0.74, 0.18), bead * 0.90);
             }}
             gl_FragColor = vec4(finalCol, 1.0);
           }}
@@ -902,38 +907,83 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       requestRender();
     }}
 
-    function replayBuildStages() {{
-      if (replayTimer) {{
-        clearInterval(replayTimer);
-        replayTimer = null;
-      }}
-      const cps = (META && META.checkpoints && META.checkpoints.length > 1)
-        ? META.checkpoints
-        : [
-            {{ label: 'Stage 1: Base Contour & Mounting Flanges', triangle_count: Math.max(1, Math.floor(totalTriCount * 0.25)) }},
-            {{ label: 'Stage 2: Central Hub & Thread Core', triangle_count: Math.max(1, Math.floor(totalTriCount * 0.55)) }},
-            {{ label: 'Stage 3: Top-Recessed Locker Dock', triangle_count: Math.max(1, Math.floor(totalTriCount * 0.82)) }},
-            {{ label: 'Stage 4: Final Watertight Manifold Solid', triangle_count: totalTriCount }}
-          ];
-      let idx = 0;
-      const applyStage = () => {{
-        const cp = cps[idx];
-        activeTriCount = Math.min(totalTriCount, cp.triangle_count || totalTriCount);
-        const pct = Math.round(100 * (idx + 1) / cps.length);
-        document.getElementById('stage-label').textContent = cp.label;
-        document.getElementById('stage-pct').textContent = pct + '%';
-        document.getElementById('stage-bar').style.width = pct + '%';
-        document.getElementById('hud-triangles').textContent = `${{activeTriCount}} / ${{totalTriCount}} tris · Score: ${{META.score}}/100`;
-        document.getElementById('live-status-text').textContent = pct < 100 ? 'BUILDING...' : 'WEBGL 3D';
-        requestRender();
-        idx++;
-        if (idx >= cps.length) {{
-          clearInterval(replayTimer);
-          replayTimer = null;
+    let timelapseRaf = null;
+    let isTimelapsePlaying = false;
+
+    function replayPrintTimelapse() {{
+      const replayBtn = document.getElementById('replay-btn');
+      if (isTimelapsePlaying) {{
+        if (timelapseRaf) {{
+          cancelAnimationFrame(timelapseRaf);
+          timelapseRaf = null;
         }}
-      }};
-      applyStage();
-      replayTimer = setInterval(applyStage, 650);
+        isTimelapsePlaying = false;
+        slicePct = 100;
+        if (replayBtn) replayBtn.innerHTML = '▶ Print Timelapse';
+        document.getElementById('slice-slider').value = 100;
+        document.getElementById('slice-val').textContent = `100% (${{(META.height_z || 0).toFixed(1)}}mm)`;
+        document.getElementById('stage-bar').style.width = '100%';
+        document.getElementById('stage-pct').textContent = '100%';
+        document.getElementById('stage-label').textContent = `Print Complete: 100% Manifold Solid (${{totalTriCount}} tris, Z = ${{(META.height_z || 0).toFixed(1)}}mm)`;
+        document.getElementById('live-status-text').textContent = 'WEBGL 3D';
+        requestRender();
+        return;
+      }}
+
+      isTimelapsePlaying = true;
+      if (replayBtn) replayBtn.innerHTML = '⏹ Stop Timelapse';
+
+      const zMin = META.min_pt ? META.min_pt[2] : 0;
+      const hz = META.height_z || 12.55;
+      const totalLayers = Math.max(1, Math.round(hz / 0.20));
+      const durationMs = 4200;
+      let startTime = null;
+
+      slicePct = 0.5;
+
+      function animateTimelapse(timestamp) {{
+        if (!isTimelapsePlaying) return;
+        if (!startTime) startTime = timestamp;
+        const elapsed = timestamp - startTime;
+        const progress = Math.min(1.0, elapsed / durationMs);
+
+        const currentPct = Math.max(0.5, progress * 100.0);
+        slicePct = currentPct;
+
+        const currentZ = zMin + (hz * currentPct / 100.0);
+        const currentLayer = Math.min(totalLayers, Math.max(1, Math.round(totalLayers * progress)));
+
+        document.getElementById('slice-slider').value = currentPct;
+        document.getElementById('slice-val').textContent = `${{Math.round(currentPct)}}% (${{currentZ.toFixed(1)}}mm)`;
+        document.getElementById('stage-bar').style.width = `${{currentPct}}%`;
+        document.getElementById('stage-pct').textContent = `${{Math.round(currentPct)}}%`;
+
+        if (progress < 1.0) {{
+          document.getElementById('stage-label').textContent = `Printing Layer ${{currentLayer}}/${{totalLayers}} · Z = ${{currentZ.toFixed(2)}} mm / ${{hz.toFixed(2)}} mm`;
+          document.getElementById('live-status-text').textContent = `PRINTING (${{currentZ.toFixed(1)}}mm)`;
+        }} else {{
+          document.getElementById('stage-label').textContent = `Print Complete: 100% Manifold Solid (${{totalTriCount}} tris, Z = ${{hz.toFixed(2)}}mm)`;
+          document.getElementById('live-status-text').textContent = 'WEBGL 3D';
+        }}
+
+        requestRender();
+
+        if (progress < 1.0) {{
+          timelapseRaf = requestAnimationFrame(animateTimelapse);
+        }} else {{
+          isTimelapsePlaying = false;
+          timelapseRaf = null;
+          slicePct = 100;
+          if (replayBtn) replayBtn.innerHTML = '▶ Print Timelapse';
+          requestRender();
+        }}
+      }}
+
+      timelapseRaf = requestAnimationFrame(animateTimelapse);
+    }}
+
+    function replayBuildStages() {{
+      replayPrintTimelapse();
     }}
 
     window.__ON_CAD_LIVE_PAYLOAD__ = function(payload) {{
@@ -1124,7 +1174,7 @@ def render_html_from_payload(payload: Dict[str, Any]) -> str:
       const pxScale = (Math.min(w, h) * 0.42 / bboxRadius) * zoom;
       const hz = META.height_z || 0;
       const zModelMin = -hz / 2.0;
-      const zModelMaxAllowed = zModelMin + (hz * slicePct / 100.0) + 0.02;
+      const zModelMaxAllowed = (slicePct >= 99.8) ? 99999.0 : (zModelMin + (hz * slicePct / 100.0) + 0.02);
 
       if (hasWebGL && gl && glProgram) {{
         gl.clearColor(0, 0, 0, 0);
