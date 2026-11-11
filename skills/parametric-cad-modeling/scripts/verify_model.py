@@ -49,6 +49,20 @@ METRIC_HOLE_REF = [
     ("M12x1.75", 12.00, 10.11, 13.00),
 ]
 
+# Standard Counterbore (DIN 912) and Countersink (DIN 7991) Reference
+METRIC_RECESSED_REF = [
+    ("M2", 2.4, 4.4, 2.2, 4.4),      # name, pilot_d, cbore_d, cbore_depth, csink_d
+    ("M2.5", 2.9, 5.0, 2.7, 5.5),
+    ("M3", 3.4, 6.0, 3.2, 6.5),
+    ("M4", 4.5, 7.5, 4.3, 8.6),
+    ("M5", 5.5, 9.0, 5.3, 10.4),
+    ("M6", 6.6, 10.5, 6.3, 12.4),
+    ("M8", 9.0, 13.5, 8.3, 16.5),
+    ("M10", 11.0, 16.5, 10.3, 20.5),
+    ("M12", 13.5, 19.5, 12.3, 24.5),
+]
+
+
 
 def snap3d(pt: Point3D, tol: int = 4) -> Point3D:
     return (round(float(pt[0]), tol), round(float(pt[1]), tol), round(float(pt[2]), tol))
@@ -283,17 +297,15 @@ def load_mesh_triangles(filepath: str) -> List[Triangle3D]:
     return parse_stl(filepath)
 
 
-def detect_cylindrical_bores(triangles: List[Triangle3D]) -> List[Dict[str, Any]]:
-    """
-    Detects vertical cylindrical & helical threaded bores/bosses in the mesh using
-    spatial-grid-indexed normal ray voting and least-squares circle fitting.
-    Runs in O(N) time even on 200,000+ triangle multi-object 3MF plates.
-    """
+def _detect_bores_axis(
+    triangles: List[Triangle3D],
+    axis_name: str,
+    plane_idx: Tuple[int, int],
+    span_idx: int,
+    stride: int,
+) -> List[Dict[str, Any]]:
     wall_segments: List[Tuple[float, float, float, float, float]] = []
     seg_grid: Dict[Tuple[int, int], List[Tuple[float, float, float, float, float]]] = defaultdict(list)
-
-    # Stride if mesh is huge (>60k triangles) while preserving dense coverage on all bores
-    stride = 1 if len(triangles) <= 60000 else max(1, len(triangles) // 45000)
 
     for i in range(0, len(triangles), stride):
         a, b, c = triangles[i]
@@ -302,64 +314,66 @@ def detect_cylindrical_bores(triangles: List[Triangle3D]) -> List[Dict[str, Any]
         nx = uy * vz - uz * vy
         ny = uz * vx - ux * vz
         nz = ux * vy - uy * vx
+        nvec = (nx, ny, nz)
         nlen = math.sqrt(nx * nx + ny * ny + nz * nz)
         if nlen < 1e-9:
             continue
-        nxy = math.hypot(nx, ny) / nlen
-        if nxy < 0.65:
+        na, nb = nvec[plane_idx[0]], nvec[plane_idx[1]]
+        n_plane = math.hypot(na, nb) / nlen
+        if n_plane < 0.65:
             continue
-        ux_n = nx / (nlen * nxy)
-        uy_n = ny / (nlen * nxy)
-        mx = (a[0] + b[0] + c[0]) / 3.0
-        my = (a[1] + b[1] + c[1]) / 3.0
-        mz = (a[2] + b[2] + c[2]) / 3.0
-        seg = (mx, my, mz, ux_n, uy_n)
+        ua_n = na / (nlen * n_plane)
+        ub_n = nb / (nlen * n_plane)
+        ma = (a[plane_idx[0]] + b[plane_idx[0]] + c[plane_idx[0]]) / 3.0
+        mb = (a[plane_idx[1]] + b[plane_idx[1]] + c[plane_idx[1]]) / 3.0
+        ms = (a[span_idx] + b[span_idx] + c[span_idx]) / 3.0
+        seg = (ma, mb, ms, ua_n, ub_n)
         wall_segments.append(seg)
-        seg_grid[(int(math.floor(mx / 5.0)), int(math.floor(my / 5.0)))].append(seg)
+        seg_grid[(int(math.floor(ma / 5.0)), int(math.floor(mb / 5.0)))].append(seg)
 
     if len(wall_segments) < 12:
         return []
 
     votes: Dict[Tuple[int, int], int] = defaultdict(int)
-    for mx, my, mz, ux_n, uy_n in wall_segments:
+    for ma, mb, ms, ua_n, ub_n in wall_segments:
         for r_probe in (1.2, 1.5, 1.7, 2.2, 2.7, 3.3, 4.0, 4.8, 5.3, 6.0, 8.0):
-            cx_est = mx + ux_n * r_probe
-            cy_est = my + uy_n * r_probe
-            bx = int(round(cx_est / 1.5))
-            by = int(round(cy_est / 1.5))
-            votes[(bx, by)] += 1
+            ca_est = ma + ua_n * r_probe
+            cb_est = mb + ub_n * r_probe
+            ba = int(round(ca_est / 1.5))
+            bb = int(round(cb_est / 1.5))
+            votes[(ba, bb)] += 1
 
     detected: List[Dict[str, Any]] = []
     seen_centers: List[Tuple[float, float]] = []
 
     top_bins = sorted(votes.items(), key=lambda kv: kv[1], reverse=True)[:80]
-    for (bx, by), count in top_bins:
+    for (ba, bb), count in top_bins:
         if count < 12:
             break
-        cx0 = bx * 1.5
-        cy0 = by * 1.5
-        if any(math.hypot(cx0 - scx, cy0 - scy) < 3.5 for scx, scy in seen_centers):
+        ca0 = ba * 1.5
+        cb0 = bb * 1.5
+        if any(math.hypot(ca0 - sca, cb0 - scb) < 3.5 for sca, scb in seen_centers):
             continue
 
-        gx0 = int(math.floor(cx0 / 5.0))
-        gy0 = int(math.floor(cy0 / 5.0))
+        ga0 = int(math.floor(ca0 / 5.0))
+        gb0 = int(math.floor(cb0 / 5.0))
         near_segs: List[Tuple[float, float, float, float, float]] = []
-        for dgx in range(-3, 4):
-            for dgy in range(-3, 4):
-                for mx, my, mz, ux_n, uy_n in seg_grid.get((gx0 + dgx, gy0 + dgy), ()):
-                    dist = math.hypot(mx - cx0, my - cy0)
+        for dga in range(-3, 4):
+            for dgb in range(-3, 4):
+                for ma, mb, ms, ua_n, ub_n in seg_grid.get((ga0 + dga, gb0 + dgb), ()):
+                    dist = math.hypot(ma - ca0, mb - cb0)
                     if 0.8 <= dist <= 12.5:
-                        if ((cx0 - mx) * ux_n + (cy0 - my) * uy_n) > 0.88 * dist:
-                            near_segs.append((mx, my, mz, ux_n, uy_n))
+                        if ((ca0 - ma) * ua_n + (cb0 - mb) * ub_n) > 0.88 * dist:
+                            near_segs.append((ma, mb, ms, ua_n, ub_n))
 
         if len(near_segs) < 12:
             continue
 
         s_aa = s_ab = s_bb = s_ac = s_bc = 0.0
-        for mx, my, _, ux_n, uy_n in near_segs:
-            a_coef = uy_n
-            b_coef = -ux_n
-            c_coef = uy_n * mx - ux_n * my
+        for ma, mb, _, ua_n, ub_n in near_segs:
+            a_coef = ub_n
+            b_coef = -ua_n
+            c_coef = ub_n * ma - ua_n * mb
             s_aa += a_coef * a_coef
             s_ab += a_coef * b_coef
             s_bb += b_coef * b_coef
@@ -368,83 +382,175 @@ def detect_cylindrical_bores(triangles: List[Triangle3D]) -> List[Dict[str, Any]
         det = s_aa * s_bb - s_ab * s_ab
         if abs(det) < 1e-6:
             continue
-        cx_fit = (s_bb * s_ac - s_ab * s_bc) / det
-        cy_fit = (s_aa * s_bc - s_ab * s_ac) / det
-        if math.hypot(cx_fit - cx0, cy_fit - cy0) > 2.2:
+        ca_fit = (s_bb * s_ac - s_ab * s_bc) / det
+        cb_fit = (s_aa * s_bc - s_ab * s_ac) / det
+        if math.hypot(ca_fit - ca0, cb_fit - cb0) > 2.2:
             continue
-        if any(math.hypot(cx_fit - scx, cy_fit - scy) < 3.5 for scx, scy in seen_centers):
+        if any(math.hypot(ca_fit - sca, cb_fit - scb) < 3.5 for sca, scb in seen_centers):
             continue
 
         inliers: List[Tuple[float, float, int, int]] = []
-        for mx, my, mz, ux_n, uy_n in near_segs:
-            dx, dy = cx_fit - mx, cy_fit - my
-            r = math.hypot(dx, dy)
+        for ma, mb, ms, ua_n, ub_n in near_segs:
+            da, db = ca_fit - ma, cb_fit - mb
+            r = math.hypot(da, db)
             if r < 0.7 or r > 12.5:
                 continue
-            align = (dx * ux_n + dy * uy_n) / r
+            align = (da * ua_n + db * ub_n) / r
             if align > 0.955:
-                octant = int((math.atan2(dy, dx) + math.pi) / (0.25 * math.pi)) % 8
-                norm_bucket = int(round(math.degrees(math.atan2(uy_n, ux_n)) / 6.0)) % 60
-                inliers.append((r, mz, octant, norm_bucket))
+                octant = int((math.atan2(db, da) + math.pi) / (0.25 * math.pi)) % 8
+                norm_bucket = int(round(math.degrees(math.atan2(ub_n, ua_n)) / 6.0)) % 60
+                inliers.append((r, ms, octant, norm_bucket))
 
         if len(inliers) < 12:
             continue
 
-        # Find dominant radius cluster (preferring the inner bore when counterbored)
-        radii = sorted(r for r, _, _, _ in inliers)
-        best_cluster: List[Tuple[float, float, int, int]] = []
-        for r_seed in (radii[len(radii) // 4], radii[len(radii) // 2]):
-            tol_r = min(1.25, max(0.30, r_seed * 0.22))
-            cand = [item for item in inliers if abs(item[0] - r_seed) <= tol_r]
-            if len(cand) > len(best_cluster):
-                best_cluster = cand
+        sorted_inliers = sorted(inliers, key=lambda x: x[0])
+        clusters: List[List[Tuple[float, float, int, int]]] = []
+        curr_cluster: List[Tuple[float, float, int, int]] = []
+        for it in sorted_inliers:
+            if not curr_cluster or abs(it[0] - curr_cluster[-1][0]) <= 0.40:
+                curr_cluster.append(it)
+            else:
+                if len(curr_cluster) >= 12:
+                    clusters.append(curr_cluster)
+                curr_cluster = [it]
+        if len(curr_cluster) >= 12:
+            clusters.append(curr_cluster)
 
-        band = best_cluster
-        if len(band) < 12:
+        if not clusters:
             continue
 
-        octants = {item[2] for item in band}
-        norm_buckets = {item[3] for item in band}
-        # Require >= 7 of 8 octants AND >= 8 distinct normal angles (eliminates 4-sided rects & 6-sided hexagons)
-        if len(octants) < 7 or len(norm_buckets) < 8:
+        for band in clusters:
+            octants = {item[2] for item in band}
+            norm_buckets = {item[3] for item in band}
+            if len(octants) < 7 or len(norm_buckets) < 8:
+                continue
+
+            r_min = min(item[0] for item in band)
+            r_max = max(item[0] for item in band)
+            s_min_b = min(item[1] for item in band)
+            s_max_b = max(item[1] for item in band)
+            if s_max_b - s_min_b < 0.8:
+                continue
+
+            d_min = round(2.0 * r_min, 2)
+            d_max = round(2.0 * r_max, 2)
+            d_avg = round(r_min + r_max, 2)
+            is_threaded = (d_max - d_min) >= 0.45
+
+            matched_fastener = None
+            for m_name, m_nom, m_minor, m_clear in METRIC_HOLE_REF:
+                if is_threaded and abs(d_max - m_nom) <= 0.85 and abs(d_min - m_minor) <= 1.1:
+                    matched_fastener = f"{m_name} female thread"
+                    break
+                elif not is_threaded and abs(d_avg - m_clear) <= 0.35:
+                    matched_fastener = f"{m_name} clearance hole"
+                    break
+                elif not is_threaded and abs(d_avg - m_nom) <= 0.25:
+                    matched_fastener = f"{m_name} nominal/self-tap hole"
+                    break
+
+            s_mid = round((s_min_b + s_max_b) / 2.0, 2)
+            if axis_name == "Z":
+                center_3d = [round(ca_fit, 2), round(cb_fit, 2), s_mid]
+            elif axis_name == "X":
+                center_3d = [s_mid, round(ca_fit, 2), round(cb_fit, 2)]
+            else:  # "Y"
+                center_3d = [round(ca_fit, 2), s_mid, round(cb_fit, 2)]
+
+            entry: Dict[str, Any] = {
+                "axis": axis_name,
+                "center_3d_mm": center_3d,
+                "center_plane_mm": [round(ca_fit, 2), round(cb_fit, 2)],
+                "diameter_min_mm": d_min,
+                "diameter_max_mm": d_max,
+                "is_threaded_bore": is_threaded,
+                "span_mm": [round(s_min_b, 2), round(s_max_b, 2)],
+                "length_mm": round(s_max_b - s_min_b, 2),
+                "matched_standard": matched_fastener,
+            }
+            if axis_name == "Z":
+                entry["center_xy_mm"] = [round(ca_fit, 2), round(cb_fit, 2)]
+                entry["z_span_mm"] = [round(s_min_b, 2), round(s_max_b, 2)]
+
+            detected.append(entry)
+
+        seen_centers.append((ca_fit, cb_fit))
+
+    return detected
+
+
+def detect_cylindrical_bores(triangles: List[Triangle3D]) -> List[Dict[str, Any]]:
+    """
+    Detects vertical and transverse (X, Y, Z axis) cylindrical & helical threaded bores in the mesh
+    using spatial-grid-indexed normal ray voting and least-squares circle fitting.
+    Runs in O(N) time even on 200,000+ triangle multi-object 3MF plates.
+    """
+    stride = 1 if len(triangles) <= 60000 else max(1, len(triangles) // 45000)
+    all_bores: List[Dict[str, Any]] = []
+
+    # Z-axis vertical bores
+    all_bores.extend(_detect_bores_axis(triangles, "Z", (0, 1), 2, stride))
+    # X-axis transverse bores (side holes)
+    all_bores.extend(_detect_bores_axis(triangles, "X", (1, 2), 0, stride))
+    # Y-axis transverse bores (side holes)
+    all_bores.extend(_detect_bores_axis(triangles, "Y", (0, 2), 1, stride))
+
+    all_bores.sort(key=lambda d: (-d["diameter_max_mm"], d["axis"], d["span_mm"][0]))
+    return all_bores
+
+
+def detect_counterbores_and_recesses(bores: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Groups coaxial bores into compound stepped counterbores and countersunk recesses (DIN 912 & DIN 7991).
+    """
+    groups: Dict[Tuple[str, int, int], List[Dict[str, Any]]] = defaultdict(list)
+    for b in bores:
+        axis = b["axis"]
+        cp = b["center_plane_mm"]
+        key = (axis, int(round(cp[0] / 0.8)), int(round(cp[1] / 0.8)))
+        groups[key].append(b)
+
+    recesses: List[Dict[str, Any]] = []
+    for (axis, _, _), b_list in groups.items():
+        if len(b_list) < 2:
             continue
+        b_sorted = sorted(b_list, key=lambda x: x["diameter_max_mm"])
+        pilot = b_sorted[0]
+        recess = b_sorted[-1]
+        p_dia = pilot["diameter_max_mm"]
+        r_dia = recess["diameter_max_mm"]
+        r_depth = recess["length_mm"]
 
-        r_min = min(item[0] for item in band)
-        r_max = max(item[0] for item in band)
-        z_min_b = min(item[1] for item in band)
-        z_max_b = max(item[1] for item in band)
-        if z_max_b - z_min_b < 0.8:
-            continue
+        best_match = None
+        best_err = float("inf")
+        feat_type = "counterbore"
+        for m_name, std_p, std_cb, std_cbd, std_cs in METRIC_RECESSED_REF:
+            err_cb = abs(p_dia - std_p) + abs(r_dia - std_cb)
+            if err_cb < 1.4 and err_cb < best_err:
+                best_err = err_cb
+                best_match = f"{m_name} DIN 912 socket head counterbore"
+                feat_type = "counterbore"
+            err_cs = abs(p_dia - std_p) + abs(r_dia - std_cs)
+            if err_cs < 1.4 and err_cs < best_err:
+                best_err = err_cs
+                best_match = f"{m_name} DIN 7991 countersink"
+                feat_type = "countersink"
 
-        d_min = round(2.0 * r_min, 2)
-        d_max = round(2.0 * r_max, 2)
-        d_avg = round(r_min + r_max, 2)
-        is_threaded = (d_max - d_min) >= 0.45
+        if not best_match:
+            best_match = f"Stepped {axis}-bore (Ø{p_dia}mm pilot, Ø{r_dia}mm recess)"
 
-        matched_fastener = None
-        for m_name, m_nom, m_minor, m_clear in METRIC_HOLE_REF:
-            if is_threaded and abs(d_max - m_nom) <= 0.85 and abs(d_min - m_minor) <= 1.1:
-                matched_fastener = f"{m_name} female thread"
-                break
-            elif not is_threaded and abs(d_avg - m_clear) <= 0.35:
-                matched_fastener = f"{m_name} clearance hole"
-                break
-            elif not is_threaded and abs(d_avg - m_nom) <= 0.25:
-                matched_fastener = f"{m_name} nominal/self-tap hole"
-                break
-
-        seen_centers.append((cx_fit, cy_fit))
-        detected.append({
-            "center_xy_mm": [round(cx_fit, 2), round(cy_fit, 2)],
-            "diameter_min_mm": d_min,
-            "diameter_max_mm": d_max,
-            "is_threaded_bore": is_threaded,
-            "z_span_mm": [round(z_min_b, 2), round(z_max_b, 2)],
-            "matched_standard": matched_fastener,
+        recesses.append({
+            "feature_type": feat_type,
+            "axis": axis,
+            "center_3d_mm": pilot["center_3d_mm"],
+            "pilot_diameter_mm": p_dia,
+            "recess_diameter_mm": r_dia,
+            "recess_depth_mm": r_depth,
+            "matched_standard": best_match,
         })
 
-    detected.sort(key=lambda d: (-d["diameter_max_mm"], d["center_xy_mm"][1], d["center_xy_mm"][0]))
-    return detected
+    return recesses
 
 
 def repair_mesh_triangles(triangles: List[Triangle3D], weld_tol: int = 3) -> Tuple[List[Triangle3D], Dict[str, int]]:
@@ -563,6 +669,7 @@ def audit_mesh(
         export_repaired_stl(triangles, repair_out)
 
     directed_edges: Dict[Tuple[Point3D, Point3D], int] = {}
+    edge_to_tri_normal: Dict[Tuple[Point3D, Point3D], Point3D] = {}
     unique_vertices: Set[Point3D] = set()
     vert_min_neighbor_z: Dict[Point3D, float] = {}
 
@@ -604,6 +711,8 @@ def audit_mesh(
         unique_vertices.add(b)
         unique_vertices.add(c)
 
+        un = (nx / norm_len, ny / norm_len, nz / norm_len)
+
         # Track lowest connected neighbor Z for floating island detection
         min_tri_z = min(a[2], b[2], c[2])
         for pt in (a, b, c):
@@ -613,6 +722,7 @@ def audit_mesh(
 
         for e in ((a, b), (b, c), (c, a)):
             directed_edges[e] = directed_edges.get(e, 0) + 1
+            edge_to_tri_normal[e] = un
 
         tri_area = 0.5 * norm_len
         total_area += tri_area
@@ -644,6 +754,32 @@ def audit_mesh(
             open_edges += 1
         elif rev_count != 1:
             non_manifold_edges += 1
+
+    # Check for sharp interior re-entrant corners (< 100° dihedral angle)
+    sharp_reentrant_edges = 0
+    checked_undirected: Set[Tuple[Point3D, Point3D]] = set()
+    for (u, v), n1 in edge_to_tri_normal.items():
+        pair_key = (min(u, v), max(u, v))
+        if pair_key in checked_undirected:
+            continue
+        checked_undirected.add(pair_key)
+        n2 = edge_to_tri_normal.get((v, u))
+        if n2 is None:
+            continue
+        ex, ey, ez = v[0] - u[0], v[1] - u[1], v[2] - u[2]
+        elen = math.sqrt(ex * ex + ey * ey + ez * ez)
+        if elen < 1e-9:
+            continue
+        eux, euy, euz = ex / elen, ey / elen, ez / elen
+        cx = n1[1] * n2[2] - n1[2] * n2[1]
+        cy = n1[2] * n2[0] - n1[0] * n2[2]
+        cz = n1[0] * n2[1] - n1[1] * n2[0]
+        sin_dihedral = cx * eux + cy * euy + cz * euz
+        if sin_dihedral < -0.05:  # Concave / re-entrant notch
+            dot_n = max(-1.0, min(1.0, n1[0] * n2[0] + n1[1] * n2[1] + n1[2] * n2[2]))
+            dihedral_deg = math.degrees(math.acos(dot_n))
+            if dihedral_deg < 100.0:
+                sharp_reentrant_edges += 1
 
     width_x = round(max_x - min_x, 4)
     depth_y = round(max_y - min_y, 4)
@@ -718,6 +854,36 @@ def audit_mesh(
                 min_gap = min(min_gap, xy_dist)
         min_inter_part_gap_mm = round(min_gap, 3)
 
+    # Assembly Clearance & Fit Classification Analysis
+    assembly_clearance: Dict[str, Any] = {
+        "shell_count": len(shell_list),
+        "min_inter_part_gap_mm": min_inter_part_gap_mm,
+        "part_collision_detected": part_collision_detected,
+        "fit_classification": "SINGLE_BODY" if len(shell_list) <= 1 else "DETACHED_PLATED_PARTS",
+        "description": "Single continuous manifold body." if len(shell_list) <= 1 else "Multi-part plated assembly.",
+    }
+    if len(shell_list) > 1 and min_inter_part_gap_mm is not None:
+        if part_collision_detected or min_inter_part_gap_mm < 0.15:
+            assembly_clearance["fit_classification"] = "FUSION_RISK_OR_COLLISION"
+            assembly_clearance["description"] = (
+                f"Clearance ({min_inter_part_gap_mm:.2f} mm) < 0.15 mm threshold. Parts risk fusing during FDM printing."
+            )
+        elif 0.15 <= min_inter_part_gap_mm <= 0.35:
+            assembly_clearance["fit_classification"] = "SLIDING_FIT"
+            assembly_clearance["description"] = (
+                f"Clearance ({min_inter_part_gap_mm:.2f} mm) is within optimal 0.15–0.35 mm range for sliding fits or print-in-place mechanisms."
+            )
+        elif 0.35 < min_inter_part_gap_mm <= 0.60:
+            assembly_clearance["fit_classification"] = "FREE_RUNNING_FIT"
+            assembly_clearance["description"] = (
+                f"Clearance ({min_inter_part_gap_mm:.2f} mm) provides a loose free-running fit for smooth fastener insertion."
+            )
+        else:
+            assembly_clearance["fit_classification"] = "DETACHED_PLATED_PARTS"
+            assembly_clearance["description"] = (
+                f"Clearance ({min_inter_part_gap_mm:.2f} mm) >= 0.60 mm. Distinct parts safely separated on the build plate."
+            )
+
     # Check if any shell is floating above the build plate (min_z of shell > global min_z + 0.3mm)
     floating_shells = sum(1 for bb in shell_list if bb[4] > min_z + 0.30)
 
@@ -737,8 +903,9 @@ def audit_mesh(
     is_watertight = (open_edges == 0 and non_manifold_edges == 0 and degenerate_faces == 0)
     overhang_pct = round(100.0 * overhang_area / max(total_area, 1e-6), 2)
 
-    # Automated Bore & Fastener Feature Detection
+    # Automated Bore, Thread, Counterbore & Recess Feature Detection (X, Y, Z axes)
     detected_bores = detect_cylindrical_bores(triangles)
+    detected_recesses = detect_counterbores_and_recesses(detected_bores)
 
     # Dimensional comparison against target_dims
     dim_check: Dict[str, Any] = {"checked": False}
@@ -756,6 +923,44 @@ def audit_mesh(
             "tolerance_mm": tolerance_mm,
             "within_tolerance": within_tol,
         }
+
+    # Filament Economics & Print Time Estimation (1.75mm filament)
+    fil_area = math.pi * (1.75 / 2.0) ** 2  # ~2.4053 mm^2
+    meters_solid = vol_mm3 / (fil_area * 1000.0)
+    vol_func = vol_mm3 * 0.38  # 3 perimeter walls + 20-25% infill
+    meters_func = vol_func / (fil_area * 1000.0)
+
+    n_layers_20 = math.ceil(height_z / 0.20)
+    n_layers_16 = math.ceil(height_z / 0.16)
+    n_layers_12 = math.ceil(height_z / 0.12)
+
+    sec_corexy = (vol_func / 14.0) + (n_layers_20 * 2.5)
+    sec_bedslinger = (vol_func / 5.5) + (n_layers_20 * 4.0)
+
+    def _fmt_time(seconds: float) -> str:
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        if h > 0:
+            return f"{h}h {m:02d}m"
+        return f"{max(1, m)}m"
+
+    print_economics = {
+        "filament_1_75mm_meters_solid": round(meters_solid, 2),
+        "filament_1_75mm_meters_functional_38pct": round(meters_func, 2),
+        "layer_counts": {
+            "layer_0_20mm": n_layers_20,
+            "layer_0_16mm": n_layers_16,
+            "layer_0_12mm": n_layers_12,
+        },
+        "estimated_print_time": {
+            "corexy_high_speed_0_20mm": _fmt_time(sec_corexy),
+            "standard_bedslinger_0_20mm": _fmt_time(sec_bedslinger),
+        },
+        "volumetric_breakdown": {
+            "total_solid_mm3": round(vol_mm3, 1),
+            "functional_infill_mm3": round(vol_func, 1),
+        },
+    }
 
     # Engineering recommendations & sturdiness rating
     warnings: List[str] = []
@@ -798,10 +1003,14 @@ def audit_mesh(
         warnings.append(
             f"Multi-part XY footprint collision detected (min_inter_part_gap_mm = {min_inter_part_gap_mm} mm). Space plated parts >= 12.0 mm apart."
         )
-    elif min_inter_part_gap_mm is not None and min_inter_part_gap_mm < 4.0:
+    elif min_inter_part_gap_mm is not None and min_inter_part_gap_mm < 0.15:
         score -= 15
         warnings.append(
-            f"Plated parts are very close ({min_inter_part_gap_mm} mm XY gap). Recommend >= 12.0 mm spacing to prevent brim fusing."
+            f"Multi-part clearance is very tight ({min_inter_part_gap_mm:.2f} mm). Fusion risk on FDM printers."
+        )
+    if sharp_reentrant_edges > 0:
+        warnings.append(
+            f"{sharp_reentrant_edges} sharp interior re-entrant corner edge(s) (<100° dihedral angle) detected. Consider adding 0.8–1.5 mm fillets to prevent fatigue notch stress concentrations."
         )
 
     score = max(0, score)
@@ -835,6 +1044,7 @@ def audit_mesh(
             "open_boundary_edges": open_edges,
             "non_manifold_edges": non_manifold_edges,
             "degenerate_faces": degenerate_faces,
+            "sharp_reentrant_edges": sharp_reentrant_edges,
             "normals_outward": signed_volume > 0,
         },
         "dimensions_mm": {
@@ -845,6 +1055,8 @@ def audit_mesh(
             "max_point": [round(max_x, 4), round(max_y, 4), round(max_z, 4)],
         },
         "detected_bores_and_threads": detected_bores,
+        "detected_counterbores_and_recesses": detected_recesses,
+        "assembly_clearance_analysis": assembly_clearance,
         "dimensional_verification": dim_check,
         "physical_properties": {
             "volume_mm3": round(vol_mm3, 2),
@@ -855,6 +1067,7 @@ def audit_mesh(
             "overhang_ratio_pct": overhang_pct,
             "solidity_fill_ratio": round(solidity_ratio, 3),
             "center_of_mass_mm": com,
+            "print_economics": print_economics,
             "estimated_mass_grams": {
                 "PLA_solid": round((vol_mm3 / 1000.0) * 1.24, 2),
                 "PLA_functional_4walls_25pct": round((vol_mm3 / 1000.0) * 1.24 * 0.45, 2),

@@ -21,6 +21,111 @@ Point2D = Tuple[float, float]
 Point3D = Tuple[float, float, float]
 Triangle3D = Tuple[Point3D, Point3D, Point3D]
 
+# ============================================================================
+# ISO Metric Fastener Reference (DIN 912 Socket Head & DIN 7991 Countersunk)
+# ============================================================================
+METRIC_THREAD_SPECS: Dict[str, Dict[str, float]] = {
+    "M2": {
+        "pitch": 0.40,
+        "nominal_dia": 2.0,
+        "pilot_hole": 2.4,
+        "tap_hole": 1.6,
+        "cbore_dia": 4.4,
+        "cbore_depth": 2.2,
+        "csink_dia": 4.4,
+        "hex_head_af": 4.0,
+        "head_height": 2.0,
+    },
+    "M2.5": {
+        "pitch": 0.45,
+        "nominal_dia": 2.5,
+        "pilot_hole": 2.9,
+        "tap_hole": 2.05,
+        "cbore_dia": 5.0,
+        "cbore_depth": 2.7,
+        "csink_dia": 5.5,
+        "hex_head_af": 5.0,
+        "head_height": 2.5,
+    },
+    "M3": {
+        "pitch": 0.50,
+        "nominal_dia": 3.0,
+        "pilot_hole": 3.4,
+        "tap_hole": 2.5,
+        "cbore_dia": 6.0,
+        "cbore_depth": 3.2,
+        "csink_dia": 6.5,
+        "hex_head_af": 5.5,
+        "head_height": 3.0,
+    },
+    "M4": {
+        "pitch": 0.70,
+        "nominal_dia": 4.0,
+        "pilot_hole": 4.5,
+        "tap_hole": 3.3,
+        "cbore_dia": 7.5,
+        "cbore_depth": 4.3,
+        "csink_dia": 8.6,
+        "hex_head_af": 7.0,
+        "head_height": 4.0,
+    },
+    "M5": {
+        "pitch": 0.80,
+        "nominal_dia": 5.0,
+        "pilot_hole": 5.5,
+        "tap_hole": 4.2,
+        "cbore_dia": 9.0,
+        "cbore_depth": 5.3,
+        "csink_dia": 10.4,
+        "hex_head_af": 8.0,
+        "head_height": 5.0,
+    },
+    "M6": {
+        "pitch": 1.00,
+        "nominal_dia": 6.0,
+        "pilot_hole": 6.6,
+        "tap_hole": 5.0,
+        "cbore_dia": 10.5,
+        "cbore_depth": 6.3,
+        "csink_dia": 12.4,
+        "hex_head_af": 10.0,
+        "head_height": 6.0,
+    },
+    "M8": {
+        "pitch": 1.25,
+        "nominal_dia": 8.0,
+        "pilot_hole": 9.0,
+        "tap_hole": 6.8,
+        "cbore_dia": 13.5,
+        "cbore_depth": 8.3,
+        "csink_dia": 16.5,
+        "hex_head_af": 13.0,
+        "head_height": 8.0,
+    },
+    "M10": {
+        "pitch": 1.50,
+        "nominal_dia": 10.0,
+        "pilot_hole": 11.0,
+        "tap_hole": 8.5,
+        "cbore_dia": 16.5,
+        "cbore_depth": 10.3,
+        "csink_dia": 20.5,
+        "hex_head_af": 17.0,
+        "head_height": 10.0,
+    },
+    "M12": {
+        "pitch": 1.75,
+        "nominal_dia": 12.0,
+        "pilot_hole": 13.5,
+        "tap_hole": 10.2,
+        "cbore_dia": 19.5,
+        "cbore_depth": 12.3,
+        "csink_dia": 24.5,
+        "hex_head_af": 19.0,
+        "head_height": 12.0,
+    },
+}
+
 
 # ============================================================================
 # 1. Exact 2D Contour Generators (CCW Orientation by default)
@@ -206,52 +311,6 @@ def _segments_intersect(a: Point2D, b: Point2D, c: Point2D, d: Point2D) -> bool:
     return False
 
 
-def _merge_hole_into_outer(outer: List[Point2D], hole_cw: List[Point2D]) -> List[Point2D]:
-    """Connects a CW hole contour into a CCW outer contour via a mutually visible bridge."""
-    m_idx = max(range(len(hole_cw)), key=lambda i: (hole_cw[i][0], hole_cw[i][1]))
-    mx, my = hole_cw[m_idx]
-
-    best_idx = 0
-    best_dist = float("inf")
-    n = len(outer)
-
-    for i in range(n):
-        if outer.count(outer[i]) > 1:
-            continue
-        ox, oy = outer[i]
-        if ox < mx - 1e-6:
-            continue
-        dist = math.hypot(ox - mx, oy - my)
-        if dist >= best_dist:
-            continue
-        intersects = False
-        for j in range(n):
-            a, b = outer[j], outer[(j + 1) % n]
-            if _segments_intersect((mx, my), (ox, oy), a, b):
-                intersects = True
-                break
-        if not intersects:
-            nh = len(hole_cw)
-            for j in range(nh):
-                a, b = hole_cw[j], hole_cw[(j + 1) % nh]
-                if _segments_intersect((mx, my), (ox, oy), a, b):
-                    intersects = True
-                    break
-        if not intersects:
-            best_dist = dist
-            best_idx = i
-
-    merged = []
-    for i in range(best_idx + 1):
-        merged.append(outer[i])
-    nh = len(hole_cw)
-    for i in range(nh + 1):
-        merged.append(hole_cw[(m_idx + i) % nh])
-    for i in range(best_idx, n):
-        merged.append(outer[i])
-    return merged
-
-
 def point_in_polygon(p: Point2D, poly: List[Point2D]) -> bool:
     """Ray-casting algorithm to test if point p lies strictly inside poly."""
     x, y = p
@@ -265,6 +324,79 @@ def point_in_polygon(p: Point2D, poly: List[Point2D]) -> bool:
             if x < xc:
                 inside = not inside
     return inside
+
+
+def _is_valid_bridge(outer: List[Point2D], hole_cw: List[Point2D], o_idx: int, h_idx: int) -> bool:
+    pt_o = outer[o_idx]
+    pt_h = hole_cw[h_idx]
+    n = len(outer)
+    nh = len(hole_cw)
+    for j in range(n):
+        if j == o_idx or (j + 1) % n == o_idx:
+            continue
+        if _segments_intersect(pt_h, pt_o, outer[j], outer[(j + 1) % n]):
+            return False
+    for j in range(nh):
+        if j == h_idx or (j + 1) % nh == h_idx:
+            continue
+        if _segments_intersect(pt_h, pt_o, hole_cw[j], hole_cw[(j + 1) % nh]):
+            return False
+    mid = ((pt_o[0] + pt_h[0]) * 0.5, (pt_o[1] + pt_h[1]) * 0.5)
+    if not point_in_polygon(mid, outer):
+        return False
+    if point_in_polygon(mid, hole_cw):
+        return False
+    return True
+
+
+def _build_bridge_polygon(outer: List[Point2D], hole_cw: List[Point2D], o_idx: int, h_idx: int) -> List[Point2D]:
+    n = len(outer)
+    nh = len(hole_cw)
+    merged = []
+    for i in range(o_idx + 1):
+        merged.append(outer[i])
+    for i in range(nh + 1):
+        merged.append(hole_cw[(h_idx + i) % nh])
+    for i in range(o_idx, n):
+        merged.append(outer[i])
+    return merged
+
+
+def _merge_hole_into_outer(outer: List[Point2D], hole_cw: List[Point2D]) -> List[Point2D]:
+    """Connects a CW hole contour into a CCW outer contour via the shortest mutually visible bridge."""
+    nh = len(hole_cw)
+    n = len(outer)
+    m_idx = max(range(nh), key=lambda i: (hole_cw[i][0], hole_cw[i][1]))
+
+    # Step 1: Probe from the rightmost vertex of the hole towards outer vertices with ox >= mx
+    candidates: List[Tuple[float, int, int]] = []
+    hx, hy = hole_cw[m_idx]
+    for o_idx in range(n):
+        if outer.count(outer[o_idx]) > 1:
+            continue
+        ox, oy = outer[o_idx]
+        if ox >= hx - 1e-6:
+            candidates.append((math.hypot(ox - hx, oy - hy), o_idx, m_idx))
+    candidates.sort(key=lambda t: t[0])
+    for dist, o_idx, h_idx in candidates:
+        if _is_valid_bridge(outer, hole_cw, o_idx, h_idx):
+            return _build_bridge_polygon(outer, hole_cw, o_idx, h_idx)
+
+    # Step 2: Global shortest visible bridge across all vertex pairs
+    all_candidates: List[Tuple[float, int, int]] = []
+    for h_i in range(nh):
+        hx, hy = hole_cw[h_i]
+        for o_i in range(n):
+            if outer.count(outer[o_i]) > 1:
+                continue
+            ox, oy = outer[o_i]
+            all_candidates.append((math.hypot(ox - hx, oy - hy), o_i, h_i))
+    all_candidates.sort(key=lambda t: t[0])
+    for dist, o_idx, h_idx in all_candidates[:120]:
+        if _is_valid_bridge(outer, hole_cw, o_idx, h_idx):
+            return _build_bridge_polygon(outer, hole_cw, o_idx, h_idx)
+
+    return _build_bridge_polygon(outer, hole_cw, 0, m_idx)
 
 
 def triangulate_polygon_with_holes(
@@ -389,6 +521,36 @@ def triangulate_polygon_with_holes(
 # 3. 3D Mesh Builder & Manifold Verification (with Live Studio Checkpoints)
 # ============================================================================
 
+def _tri_nz_unit(a: Point3D, b: Point3D, c: Point3D) -> float:
+    ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
+    vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
+    nx = uy * vz - uz * vy
+    ny = uz * vx - ux * vz
+    nz = ux * vy - uy * vx
+    length = math.sqrt(nx * nx + ny * ny + nz * nz)
+    if length < 1e-12:
+        return 1.0
+    return nz / length
+
+
+def _add_optimal_quad(
+    builder: Any,
+    p1: Point3D,
+    p2: Point3D,
+    p3: Point3D,
+    p4: Point3D,
+) -> None:
+    """Chooses the quad diagonal that avoids flat overhang triangles on sloped ramps/threads."""
+    nz_diag1 = min(_tri_nz_unit(p1, p2, p3), _tri_nz_unit(p1, p3, p4))
+    nz_diag2 = min(_tri_nz_unit(p1, p2, p4), _tri_nz_unit(p2, p3, p4))
+    if nz_diag2 > nz_diag1 + 1e-6:
+        builder.add_triangle(p1, p2, p4)
+        builder.add_triangle(p2, p3, p4)
+    else:
+        builder.add_triangle(p1, p2, p3)
+        builder.add_triangle(p1, p3, p4)
+
+
 class ManifoldMeshBuilder:
     def __init__(self) -> None:
         self.triangles: List[Triangle3D] = []
@@ -468,6 +630,234 @@ class ManifoldMeshBuilder:
         is_outer_wall: bool = True,
     ) -> None:
         self.add_lofted_contour_wall(contour, z_bottom, contour, z_top, is_outer_wall=is_outer_wall)
+
+    def add_threaded_bore(
+        self,
+        cx: float,
+        cy: float,
+        z_bottom: float,
+        z_top: float,
+        metric_size: str = "M10",
+        pitch: Optional[float] = None,
+        clearance_offset: float = 0.20,
+        segments: int = 36,
+    ) -> Tuple[List[Point2D], List[Point2D]]:
+        """
+        Generates a 100% watertight internal female metric thread bore with lead-in chamfer fade.
+        Returns (bottom_hole_contour, top_hole_contour) matching the bore boundary exactly.
+        """
+        spec = METRIC_THREAD_SPECS.get(metric_size.upper(), METRIC_THREAD_SPECS["M10"])
+        d_nom = float(spec["nominal_dia"])
+        p = float(pitch if pitch is not None else spec["pitch"])
+        thread_len = z_top - z_bottom
+        if thread_len <= 0:
+            raise ValueError(f"z_top ({z_top}) must be > z_bottom ({z_bottom})")
+
+        thread_depth = min(0.54 * p, 0.45 * p)
+        r_major = (d_nom / 2.0) + clearance_offset
+        r_minor = r_major - thread_depth
+        bore_cap = circle_contour(cx, cy, r_major, segments=segments)
+
+        n_slices = max(16, int(round(thread_len / (p / 8.0))))
+        rings: List[List[Point3D]] = []
+        for s in range(n_slices + 1):
+            z_val = z_bottom + thread_len * s / n_slices
+            fade = min(1.0, (z_val - z_bottom) / (1.2 * p), (z_top - z_val) / (1.2 * p)) if 0 < s < n_slices else 0.0
+            fade = max(0.0, fade)
+            ring: List[Point3D] = []
+            for i in range(segments):
+                if s == 0 or s == n_slices:
+                    pt2d = bore_cap[i]
+                    ring.append((pt2d[0], pt2d[1], round(z_val, 5)))
+                else:
+                    theta = 2.0 * math.pi * i / segments
+                    phase = ((z_val - z_bottom) / p) - (theta / (2.0 * math.pi))
+                    frac = phase - math.floor(phase)
+                    tri_wave = 1.0 - abs(2.0 * frac - 1.0)
+                    r_curr = r_major - fade * (r_major - r_minor) * tri_wave
+                    ring.append(snap3d((cx + r_curr * math.cos(theta), cy + r_curr * math.sin(theta), z_val)))
+            rings.append(ring)
+
+        for rz in range(len(rings) - 1):
+            r_low = rings[rz]
+            r_high = rings[rz + 1]
+            for i in range(segments):
+                inext = (i + 1) % segments
+                _add_optimal_quad(self, r_low[i], r_high[i], r_high[inext], r_low[inext])
+
+        return bore_cap, bore_cap
+
+    def add_threaded_rod(
+        self,
+        cx: float,
+        cy: float,
+        z_bottom: float,
+        z_top: float,
+        metric_size: str = "M10",
+        pitch: Optional[float] = None,
+        clearance_offset: float = 0.15,
+        segments: int = 36,
+    ) -> Tuple[List[Point2D], List[Point2D]]:
+        """
+        Generates a 100% watertight external male metric thread shaft with lead-in chamfer fade.
+        Returns (bottom_contour, top_contour) matching the rod boundary exactly.
+        """
+        spec = METRIC_THREAD_SPECS.get(metric_size.upper(), METRIC_THREAD_SPECS["M10"])
+        d_nom = float(spec["nominal_dia"])
+        p = float(pitch if pitch is not None else spec["pitch"])
+        thread_len = z_top - z_bottom
+        if thread_len <= 0:
+            raise ValueError(f"z_top ({z_top}) must be > z_bottom ({z_bottom})")
+
+        thread_depth = min(0.54 * p, 0.45 * p)
+        r_major = (d_nom / 2.0) - clearance_offset * 0.75
+        r_minor = r_major - thread_depth
+        rod_cap = circle_contour(cx, cy, r_minor, segments=segments)
+
+        n_slices = max(20, int(round(thread_len / (p / 8.0))))
+        rings: List[List[Point3D]] = []
+        for s in range(n_slices + 1):
+            z_val = z_bottom + thread_len * s / n_slices
+            fade = min(1.0, (z_val - z_bottom) / (1.2 * p), (z_top - z_val) / (1.2 * p)) if 0 < s < n_slices else 0.0
+            fade = max(0.0, fade)
+            ring: List[Point3D] = []
+            for i in range(segments):
+                if s == 0 or s == n_slices:
+                    pt2d = rod_cap[i]
+                    ring.append((pt2d[0], pt2d[1], round(z_val, 5)))
+                else:
+                    theta = 2.0 * math.pi * i / segments
+                    phase = ((z_val - z_bottom) / p) - (theta / (2.0 * math.pi))
+                    frac = phase - math.floor(phase)
+                    tri_wave = 1.0 - abs(2.0 * frac - 1.0)
+                    r_curr = r_minor + fade * (r_major - r_minor) * tri_wave
+                    ring.append(snap3d((cx + r_curr * math.cos(theta), cy + r_curr * math.sin(theta), z_val)))
+            rings.append(ring)
+
+        for rz in range(len(rings) - 1):
+            r_low = rings[rz]
+            r_high = rings[rz + 1]
+            for i in range(segments):
+                inext = (i + 1) % segments
+                _add_optimal_quad(self, r_low[i], r_low[inext], r_high[inext], r_high[i])
+
+        return rod_cap, rod_cap
+
+    def add_counterbored_hole(
+        self,
+        cx: float,
+        cy: float,
+        z_bottom: float,
+        z_top: float,
+        metric_size: str = "M3",
+        cbore_dia: Optional[float] = None,
+        cbore_depth: Optional[float] = None,
+        pilot_dia: Optional[float] = None,
+        from_top: bool = True,
+        segments: int = 36,
+    ) -> Tuple[List[Point2D], List[Point2D]]:
+        """
+        Creates a stepped counterbore hole (DIN 912 socket head) with internal cavity wall & shoulder.
+        Returns (bottom_hole_contour, top_hole_contour).
+        """
+        spec = METRIC_THREAD_SPECS.get(metric_size.upper(), METRIC_THREAD_SPECS["M3"])
+        cb_d = float(cbore_dia if cbore_dia is not None else spec["cbore_dia"])
+        cb_h = float(cbore_depth if cbore_depth is not None else spec["cbore_depth"])
+        p_d = float(pilot_dia if pilot_dia is not None else spec["pilot_hole"])
+        total_h = z_top - z_bottom
+        cb_h = min(cb_h, total_h * 0.85)
+
+        cb_contour = circle_contour(cx, cy, cb_d / 2.0, segments=segments)
+        pilot_contour = circle_contour(cx, cy, p_d / 2.0, segments=segments)
+
+        if from_top:
+            z_shoulder = z_top - cb_h
+            self.add_extruded_wall(pilot_contour, z_bottom, z_shoulder, is_outer_wall=False)
+            self.add_horizontal_face(cb_contour, holes=[pilot_contour], z=z_shoulder, facing_up=True)
+            self.add_extruded_wall(cb_contour, z_shoulder, z_top, is_outer_wall=False)
+            return pilot_contour, cb_contour
+        else:
+            z_shoulder = z_bottom + cb_h
+            self.add_extruded_wall(cb_contour, z_bottom, z_shoulder, is_outer_wall=False)
+            self.add_horizontal_face(cb_contour, holes=[pilot_contour], z=z_shoulder, facing_up=False)
+            self.add_extruded_wall(pilot_contour, z_shoulder, z_top, is_outer_wall=False)
+            return cb_contour, pilot_contour
+
+    def add_countersunk_hole(
+        self,
+        cx: float,
+        cy: float,
+        z_bottom: float,
+        z_top: float,
+        metric_size: str = "M3",
+        csink_dia: Optional[float] = None,
+        pilot_dia: Optional[float] = None,
+        from_top: bool = True,
+        segments: int = 36,
+    ) -> Tuple[List[Point2D], List[Point2D]]:
+        """
+        Creates a DIN 7991 90-degree countersunk hole with internal conical transition wall.
+        Returns (bottom_hole_contour, top_hole_contour).
+        """
+        spec = METRIC_THREAD_SPECS.get(metric_size.upper(), METRIC_THREAD_SPECS["M3"])
+        cs_d = float(csink_dia if csink_dia is not None else spec["csink_dia"])
+        p_d = float(pilot_dia if pilot_dia is not None else spec["pilot_hole"])
+        cone_depth = (cs_d - p_d) / 2.0
+        total_h = z_top - z_bottom
+        cone_depth = min(cone_depth, total_h * 0.85)
+
+        cs_contour = circle_contour(cx, cy, cs_d / 2.0, segments=segments)
+        pilot_contour = circle_contour(cx, cy, p_d / 2.0, segments=segments)
+
+        if from_top:
+            z_cone = z_top - cone_depth
+            self.add_extruded_wall(pilot_contour, z_bottom, z_cone, is_outer_wall=False)
+            self.add_lofted_contour_wall(pilot_contour, z_cone, cs_contour, z_top, is_outer_wall=False)
+            return pilot_contour, cs_contour
+        else:
+            z_cone = z_bottom + cone_depth
+            self.add_lofted_contour_wall(cs_contour, z_bottom, pilot_contour, z_cone, is_outer_wall=False)
+            self.add_extruded_wall(pilot_contour, z_cone, z_top, is_outer_wall=False)
+            return cs_contour, pilot_contour
+
+    def add_chamfered_transition_wall(
+        self,
+        contour_base: List[Point2D],
+        z_base: float,
+        z_trans: float,
+        chamfer_delta: float,
+        is_outer_wall: bool = True,
+    ) -> List[Point2D]:
+        """
+        Lofts a 45-degree supportless chamfer transition between contour_base at z_base
+        and an expanded/contracted contour at z_trans.
+        Returns the new transitioned contour.
+        """
+        cb = ensure_ccw(contour_base)
+        n = len(cb)
+        trans_contour: List[Point2D] = []
+        for i in range(n):
+            prev_pt = cb[(i - 1 + n) % n]
+            curr_pt = cb[i]
+            next_pt = cb[(i + 1) % n]
+            dx1, dy1 = curr_pt[0] - prev_pt[0], curr_pt[1] - prev_pt[1]
+            l1 = math.hypot(dx1, dy1)
+            n1x, n1y = (dy1 / l1, -dx1 / l1) if l1 > 1e-9 else (0.0, 1.0)
+            dx2, dy2 = next_pt[0] - curr_pt[0], next_pt[1] - curr_pt[1]
+            l2 = math.hypot(dx2, dy2)
+            n2x, n2y = (dy2 / l2, -dx2 / l2) if l2 > 1e-9 else (0.0, 1.0)
+            vnx = n1x + n2x
+            vny = n1y + n2y
+            vnl = math.hypot(vnx, vny)
+            if vnl > 1e-9:
+                vnx /= vnl
+                vny /= vnl
+            else:
+                vnx, vny = n1x, n1y
+            trans_contour.append(snap2d((curr_pt[0] + vnx * chamfer_delta, curr_pt[1] + vny * chamfer_delta)))
+
+        self.add_lofted_contour_wall(cb, z_base, trans_contour, z_trans, is_outer_wall=is_outer_wall)
+        return trans_contour
 
     def verify_topology(self) -> Dict[str, object]:
         """Checks watertightness, edge incidence, volume, surface area, and bounding box."""
@@ -783,35 +1173,6 @@ def export_multi_part_3mf(
 # ============================================================================
 # 3b. Conformal Multi-Layer Prism & Helical Thread Builder (Zero T-Junctions)
 # ============================================================================
-
-def _tri_nz_unit(a: Point3D, b: Point3D, c: Point3D) -> float:
-    ux, uy, uz = b[0] - a[0], b[1] - a[1], b[2] - a[2]
-    vx, vy, vz = c[0] - a[0], c[1] - a[1], c[2] - a[2]
-    nx = uy * vz - uz * vy
-    ny = uz * vx - ux * vz
-    nz = ux * vy - uy * vx
-    length = math.sqrt(nx * nx + ny * ny + nz * nz)
-    if length < 1e-12:
-        return 1.0
-    return nz / length
-
-
-def _add_optimal_quad(
-    builder: ManifoldMeshBuilder,
-    p1: Point3D,
-    p2: Point3D,
-    p3: Point3D,
-    p4: Point3D,
-) -> None:
-    """Chooses the quad diagonal that avoids flat overhang triangles on sloped ramps/threads."""
-    nz_diag1 = min(_tri_nz_unit(p1, p2, p3), _tri_nz_unit(p1, p3, p4))
-    nz_diag2 = min(_tri_nz_unit(p1, p2, p4), _tri_nz_unit(p2, p3, p4))
-    if nz_diag2 > nz_diag1 + 1e-6:
-        builder.add_triangle(p1, p2, p4)
-        builder.add_triangle(p2, p3, p4)
-    else:
-        builder.add_triangle(p1, p2, p3)
-        builder.add_triangle(p1, p3, p4)
 
 
 def make_circle_patch_overrides(
